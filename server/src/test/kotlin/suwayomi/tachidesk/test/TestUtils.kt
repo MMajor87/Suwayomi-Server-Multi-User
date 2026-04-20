@@ -9,7 +9,8 @@ package suwayomi.tachidesk.test
 
 import ch.qos.logback.classic.Level
 import eu.kanade.tachiyomi.source.model.SManga
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.DelegatingKLogger
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.jetbrains.exposed.dao.id.IdTable
 import org.jetbrains.exposed.sql.batchInsert
 import org.jetbrains.exposed.sql.deleteAll
@@ -20,45 +21,40 @@ import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 
 fun setLoggingEnabled(enabled: Boolean = true) {
-    val logger = (KotlinLogging.logger(Logger.ROOT_LOGGER_NAME).underlyingLogger as ch.qos.logback.classic.Logger)
-    logger.level = if (enabled) {
-        Level.DEBUG
-    } else {
-        Level.ERROR
-    }
+    val logger = ((KotlinLogging.logger(Logger.ROOT_LOGGER_NAME) as DelegatingKLogger<*>).underlyingLogger as ch.qos.logback.classic.Logger)
+    logger.level =
+        if (enabled) {
+            Level.DEBUG
+        } else {
+            Level.ERROR
+        }
 }
 
 const val BASE_PATH = "build/tmp/TestDesk"
 
-fun createLibraryManga(
-    _title: String
-): Int {
-    return transaction {
-        MangaTable.insertAndGetId {
-            it[title] = _title
-            it[url] = _title
-            it[sourceReference] = 1
-            it[defaultCategory] = true
-            it[inLibrary] = true
-        }.value
+fun createLibraryManga(_title: String): Int =
+    transaction {
+        MangaTable
+            .insertAndGetId {
+                it[title] = _title
+                it[url] = _title
+                it[sourceReference] = 1
+                it[inLibrary] = true
+            }.value
     }
-}
 
-fun createSMangas(
-    count: Int
-): List<SManga> {
-    return (0 until count).map {
+fun createSMangas(count: Int): List<SManga> =
+    (0 until count).map {
         SManga.create().apply {
             title = "Manga $it"
             url = "https://$title"
         }
     }
-}
 
 fun createChapters(
     mangaId: Int,
     amount: Int,
-    read: Boolean
+    read: Boolean,
 ) {
     val list = listOf((0 until amount)).flatten().map { 1 }
     transaction {

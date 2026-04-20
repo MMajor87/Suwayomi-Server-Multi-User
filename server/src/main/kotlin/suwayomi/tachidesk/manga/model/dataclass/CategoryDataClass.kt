@@ -1,5 +1,7 @@
 package suwayomi.tachidesk.manga.model.dataclass
 
+import com.fasterxml.jackson.annotation.JsonValue
+
 /*
  * Copyright (C) Contributors to the Suwayomi project
  *
@@ -7,10 +9,26 @@ package suwayomi.tachidesk.manga.model.dataclass
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+enum class IncludeOrExclude(
+    @JsonValue val value: Int,
+) {
+    EXCLUDE(0),
+    INCLUDE(1),
+    UNSET(-1),
+    ;
+
+    companion object {
+        fun fromValue(value: Int) = IncludeOrExclude.values().find { it.value == value } ?: UNSET
+    }
+}
+
 data class CategoryDataClass(
     val id: Int,
     val order: Int,
     val name: String,
     val default: Boolean,
-    val meta: Map<String, String> = emptyMap()
+    val size: Int,
+    val includeInUpdate: IncludeOrExclude,
+    val includeInDownload: IncludeOrExclude,
+    val meta: Map<String, String> = emptyMap(),
 )

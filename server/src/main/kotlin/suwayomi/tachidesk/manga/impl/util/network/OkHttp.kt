@@ -20,23 +20,30 @@ suspend fun Call.await(): Response {
     return suspendCancellableCoroutine { continuation ->
         enqueue(
             object : Callback {
-                override fun onResponse(call: Call, response: Response) {
+                override fun onResponse(
+                    call: Call,
+                    response: Response,
+                ) {
                     if (!response.isSuccessful) {
                         continuation.resumeWithException(Exception("HTTP error ${response.code}"))
                         return
                     }
 
-                    continuation.resume(response) {
-                        response.body?.closeQuietly()
+                    continuation.resume(response) { _, resourceToClose, _ ->
+                        response.body.closeQuietly()
+                        resourceToClose.closeQuietly()
                     }
                 }
 
-                override fun onFailure(call: Call, e: IOException) {
+                override fun onFailure(
+                    call: Call,
+                    e: IOException,
+                ) {
                     // Don't bother with resuming the continuation if it is already cancelled.
                     if (continuation.isCancelled) return
                     continuation.resumeWithException(e)
                 }
-            }
+            },
         )
 
         continuation.invokeOnCancellation {

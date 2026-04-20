@@ -1,9 +1,10 @@
+@file:Suppress("ktlint:standard:property-naming")
+
 package eu.kanade.tachiyomi.source.model
 
 import java.io.Serializable
 
 interface SManga : Serializable {
-
     var url: String
 
     var title: String
@@ -20,35 +21,9 @@ interface SManga : Serializable {
 
     var thumbnail_url: String?
 
+    var update_strategy: UpdateStrategy
+
     var initialized: Boolean
-
-    fun copyFrom(other: SManga) {
-        if (other.author != null) {
-            author = other.author
-        }
-
-        if (other.artist != null) {
-            artist = other.artist
-        }
-
-        if (other.description != null) {
-            description = other.description
-        }
-
-        if (other.genre != null) {
-            genre = other.genre
-        }
-
-        if (other.thumbnail_url != null) {
-            thumbnail_url = other.thumbnail_url
-        }
-
-        status = other.status
-
-        if (!initialized) {
-            initialized = other.initialized
-        }
-    }
 
     companion object {
         const val UNKNOWN = 0
@@ -59,9 +34,7 @@ interface SManga : Serializable {
         const val CANCELLED = 5
         const val ON_HIATUS = 6
 
-        fun create(): SManga {
-            return SMangaImpl()
-        }
+        fun create(): SManga = SMangaImpl()
     }
 }
 

@@ -3,7 +3,7 @@ package xyz.nulldev.androidcompat.service
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
 
@@ -18,7 +18,10 @@ class ServiceSupport {
 
     private val logger = KotlinLogging.logger {}
 
-    fun startService(@Suppress("UNUSED_PARAMETER") context: Context, intent: Intent) {
+    fun startService(
+        @Suppress("UNUSED_PARAMETER") context: Context,
+        intent: Intent,
+    ) {
         val name = intentToClassName(intent)
 
         logger.debug { "Starting service: $name" }
@@ -35,7 +38,10 @@ class ServiceSupport {
         }
     }
 
-    fun stopService(@Suppress("UNUSED_PARAMETER") context: Context, intent: Intent) {
+    fun stopService(
+        @Suppress("UNUSED_PARAMETER") context: Context,
+        intent: Intent,
+    ) {
         val name = intentToClassName(intent)
         stopService(name)
     }

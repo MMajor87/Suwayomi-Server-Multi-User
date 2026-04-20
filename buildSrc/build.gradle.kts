@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     `kotlin-dsl`
 }
@@ -7,5 +9,15 @@ repositories {
 }
 
 dependencies {
-    implementation("net.lingala.zip4j:zip4j:2.9.0")
+    implementation(libs.zip4j)
+}
+
+java {
+    val javaVersion = JavaVersion.toVersion(libs.versions.jvmTarget.get())
+    sourceCompatibility = javaVersion
+    targetCompatibility = javaVersion
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+    compilerOptions.jvmTarget = JvmTarget.fromTarget(libs.versions.jvmTarget.get())
 }
