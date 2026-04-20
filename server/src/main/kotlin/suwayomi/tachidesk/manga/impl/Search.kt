@@ -10,40 +10,52 @@ package suwayomi.tachidesk.manga.impl
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
-import io.javalin.plugin.json.JsonMapper
+import io.javalin.json.JsonMapper
+import io.javalin.json.fromJsonString
 import kotlinx.serialization.Serializable
-import org.kodein.di.DI
-import org.kodein.di.conf.global
-import org.kodein.di.instance
 import suwayomi.tachidesk.manga.impl.MangaList.processEntries
-import suwayomi.tachidesk.manga.impl.util.lang.awaitSingle
 import suwayomi.tachidesk.manga.impl.util.source.GetCatalogueSource.getCatalogueSourceOrStub
 import suwayomi.tachidesk.manga.model.dataclass.PagedMangaListDataClass
+import uy.kohesive.injekt.injectLazy
 
 object Search {
-    suspend fun sourceSearch(sourceId: Long, searchTerm: String, pageNum: Int): PagedMangaListDataClass {
+    suspend fun sourceSearch(
+        sourceId: Long,
+        searchTerm: String,
+        pageNum: Int,
+    ): PagedMangaListDataClass {
         val source = getCatalogueSourceOrStub(sourceId)
-        val searchManga = source.fetchSearchManga(pageNum, searchTerm, getFilterListOf(source)).awaitSingle()
+        val searchManga = source.getSearchManga(pageNum, searchTerm, getFilterListOf(source))
         return searchManga.processEntries(sourceId)
     }
 
-    suspend fun sourceFilter(sourceId: Long, pageNum: Int, filter: FilterData): PagedMangaListDataClass {
+    suspend fun sourceFilter(
+        sourceId: Long,
+        pageNum: Int,
+        filter: FilterData,
+    ): PagedMangaListDataClass {
         val source = getCatalogueSourceOrStub(sourceId)
         val filterList = if (filter.filter != null) buildFilterList(sourceId, filter.filter) else source.getFilterList()
-        val searchManga = source.fetchSearchManga(pageNum, filter.searchTerm ?: "", filterList).awaitSingle()
+        val searchManga = source.getSearchManga(pageNum, filter.searchTerm ?: "", filterList)
         return searchManga.processEntries(sourceId)
     }
 
     private val filterListCache = mutableMapOf<Long, FilterList>()
 
-    private fun getFilterListOf(source: CatalogueSource, reset: Boolean = false): FilterList {
+    private fun getFilterListOf(
+        source: CatalogueSource,
+        reset: Boolean = false,
+    ): FilterList {
         if (reset || !filterListCache.containsKey(source.id)) {
             filterListCache[source.id] = source.getFilterList()
         }
         return filterListCache[source.id]!!
     }
 
-    fun getFilterList(sourceId: Long, reset: Boolean): List<FilterObject> {
+    fun getFilterList(
+        sourceId: Long,
+        reset: Boolean,
+    ): List<FilterObject> {
         val source = getCatalogueSourceOrStub(sourceId)
 
         return getFilterListOf(source, reset).list.map {
@@ -71,44 +83,71 @@ object Search {
                                     is Filter.Select<*> -> FilterObject("Select", item)
                                     else -> throw RuntimeException("Illegal Group item type!")
                                 }
-                            }
+                            },
                         )
                     }
-                    else -> it
-                }
+
+                    else -> {
+                        it
+                    }
+                },
             )
         }
     }
 
     private fun Filter.Select<*>.getValuesType(): String = values::class.java.componentType!!.simpleName
-    class SerializableGroup(name: String, state: List<FilterObject>) : Filter<List<FilterObject>>(name, state)
+
+    class SerializableGroup(
+        name: String,
+        state: List<FilterObject>,
+    ) : Filter<List<FilterObject>>(name, state)
 
     data class FilterObject(
         val type: String,
-        val filter: Filter<*>
+        val filter: Filter<*>,
     )
 
-    fun setFilter(sourceId: Long, changes: List<FilterChange>) {
+    fun setFilter(
+        sourceId: Long,
+        changes: List<FilterChange>,
+    ) {
         val source = getCatalogueSourceOrStub(sourceId)
         val filterList = getFilterListOf(source, false)
         updateFilterList(filterList, changes)
     }
 
-    private fun updateFilterList(filterList: FilterList, changes: List<FilterChange>): FilterList {
+    private fun updateFilterList(
+        filterList: FilterList,
+        changes: List<FilterChange>,
+    ): FilterList {
         changes.forEach { change ->
             when (val filter = filterList[change.position]) {
                 is Filter.Header -> {
                     // NOOP
                 }
+
                 is Filter.Separator -> {
                     // NOOP
                 }
-                is Filter.Select<*> -> filter.state = change.state.toInt()
-                is Filter.Text -> filter.state = change.state
-                is Filter.CheckBox -> filter.state = change.state.toBooleanStrict()
-                is Filter.TriState -> filter.state = change.state.toInt()
+
+                is Filter.Select<*> -> {
+                    filter.state = change.state.toInt()
+                }
+
+                is Filter.Text -> {
+                    filter.state = change.state
+                }
+
+                is Filter.CheckBox -> {
+                    filter.state = change.state.toBooleanStrict()
+                }
+
+                is Filter.TriState -> {
+                    filter.state = change.state.toInt()
+                }
+
                 is Filter.Group<*> -> {
-                    val groupChange = jsonMapper.fromJsonString(change.state, FilterChange::class.java)
+                    val groupChange = jsonMapper.fromJsonString<FilterChange>(change.state)
 
                     when (val groupFilter = filter.state[groupChange.position]) {
                         is Filter.CheckBox -> groupFilter.state = groupChange.state.toBooleanStrict()
@@ -117,6 +156,7 @@ object Search {
                         is Filter.Select<*> -> groupFilter.state = groupChange.state.toInt()
                     }
                 }
+
                 is Filter.Sort -> {
                     filter.state = jsonMapper.fromJsonString(change.state, Filter.Sort.Selection::class.java)
                 }
@@ -125,24 +165,27 @@ object Search {
         return filterList
     }
 
-    private fun buildFilterList(sourceId: Long, changes: List<FilterChange>): FilterList {
+    fun buildFilterList(
+        sourceId: Long,
+        changes: List<FilterChange>,
+    ): FilterList {
         val source = getCatalogueSourceOrStub(sourceId)
         val filterList = source.getFilterList()
         return updateFilterList(filterList, changes)
     }
 
-    private val jsonMapper by DI.global.instance<JsonMapper>()
+    private val jsonMapper: JsonMapper by injectLazy()
 
     @Serializable
     data class FilterChange(
         val position: Int,
-        val state: String
+        val state: String,
     )
 
     @Serializable
     data class FilterData(
         val searchTerm: String?,
-        val filter: List<FilterChange>?
+        val filter: List<FilterChange>?,
     )
 
     @Suppress("UNUSED_PARAMETER")

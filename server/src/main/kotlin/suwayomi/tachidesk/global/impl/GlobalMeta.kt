@@ -1,10 +1,10 @@
 package suwayomi.tachidesk.global.impl
 
-import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.select
+import org.jetbrains.exposed.dao.id.EntityID
+import org.jetbrains.exposed.sql.batchInsert
 import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.statements.BatchUpdateStatement
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.update
 import suwayomi.tachidesk.global.model.table.GlobalMetaTable
 
 /*
@@ -15,29 +15,45 @@ import suwayomi.tachidesk.global.model.table.GlobalMetaTable
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 object GlobalMeta {
-    fun modifyMeta(key: String, value: String) {
-        transaction {
-            val meta = transaction {
-                GlobalMetaTable.select { GlobalMetaTable.key eq key }
-            }.firstOrNull()
+    fun modifyMeta(
+        key: String,
+        value: String,
+    ) {
+        modifyMetas(mapOf(key to value))
+    }
 
-            if (meta == null) {
-                GlobalMetaTable.insert {
-                    it[GlobalMetaTable.key] = key
-                    it[GlobalMetaTable.value] = value
+    fun modifyMetas(meta: Map<String, String>) {
+        transaction {
+            val dbMetaMap =
+                GlobalMetaTable
+                    .selectAll()
+                    .where { GlobalMetaTable.key inList meta.keys }
+                    .associateBy { it[GlobalMetaTable.key] }
+            val (existingMeta, newMeta) = meta.toList().partition { (key) -> key in dbMetaMap.keys }
+
+            if (existingMeta.isNotEmpty()) {
+                BatchUpdateStatement(GlobalMetaTable).apply {
+                    existingMeta.forEach { (key, value) ->
+                        addBatch(EntityID(dbMetaMap[key]!![GlobalMetaTable.id].value, GlobalMetaTable))
+                        this[GlobalMetaTable.value] = value
+                    }
+                    execute(this@transaction)
                 }
-            } else {
-                GlobalMetaTable.update({ GlobalMetaTable.key eq key }) {
-                    it[GlobalMetaTable.value] = value
+            }
+
+            if (newMeta.isNotEmpty()) {
+                GlobalMetaTable.batchInsert(newMeta) { (key, value) ->
+                    this[GlobalMetaTable.key] = key
+                    this[GlobalMetaTable.value] = value
                 }
             }
         }
     }
 
-    fun getMetaMap(): Map<String, String> {
-        return transaction {
-            GlobalMetaTable.selectAll()
+    fun getMetaMap(): Map<String, String> =
+        transaction {
+            GlobalMetaTable
+                .selectAll()
                 .associate { it[GlobalMetaTable.key] to it[GlobalMetaTable.value] }
         }
-    }
 }

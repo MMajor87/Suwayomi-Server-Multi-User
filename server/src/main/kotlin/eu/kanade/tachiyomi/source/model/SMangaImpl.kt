@@ -1,7 +1,8 @@
+@file:Suppress("ktlint:standard:property-naming")
+
 package eu.kanade.tachiyomi.source.model
 
 class SMangaImpl : SManga {
-
     override lateinit var url: String
 
     override lateinit var title: String
@@ -17,6 +18,8 @@ class SMangaImpl : SManga {
     override var status: Int = 0
 
     override var thumbnail_url: String? = null
+
+    override var update_strategy: UpdateStrategy = UpdateStrategy.ALWAYS_UPDATE
 
     override var initialized: Boolean = false
 }

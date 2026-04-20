@@ -7,8 +7,14 @@ package suwayomi.tachidesk.manga.impl
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import eu.kanade.tachiyomi.source.local.LocalSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.select
+import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
 import suwayomi.tachidesk.manga.impl.Manga.getManga
@@ -18,17 +24,24 @@ import suwayomi.tachidesk.manga.model.table.MangaTable
 import java.time.Instant
 
 object Library {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     suspend fun addMangaToLibrary(mangaId: Int) {
         val manga = getManga(mangaId)
         if (!manga.inLibrary) {
             transaction {
-                val defaultCategories = CategoryTable.select { CategoryTable.isDefault eq true }.toList()
-                val existingCategories = CategoryMangaTable.select { CategoryMangaTable.manga eq mangaId }.toList()
+                val defaultCategories =
+                    CategoryTable
+                        .selectAll()
+                        .where {
+                            (CategoryTable.isDefault eq true) and
+                                (CategoryTable.id neq Category.DEFAULT_CATEGORY_ID)
+                        }.toList()
+                val existingCategories = CategoryMangaTable.selectAll().where { CategoryMangaTable.manga eq mangaId }.toList()
 
                 MangaTable.update({ MangaTable.id eq manga.id }) {
                     it[inLibrary] = true
                     it[inLibraryAt] = Instant.now().epochSecond
-                    it[defaultCategory] = defaultCategories.isEmpty() && existingCategories.isEmpty()
                 }
 
                 if (existingCategories.isEmpty()) {
@@ -39,6 +52,8 @@ object Library {
                         }
                     }
                 }
+            }.apply {
+                handleMangaThumbnail(mangaId, true)
             }
         }
     }
@@ -50,6 +65,38 @@ object Library {
                 MangaTable.update({ MangaTable.id eq manga.id }) {
                     it[inLibrary] = false
                 }
+            }.apply {
+                handleMangaThumbnail(mangaId, false)
+            }
+        }
+    }
+
+    fun handleMangaThumbnail(
+        mangaId: Int,
+        inLibrary: Boolean,
+    ) {
+        scope.launch {
+            val sourceId =
+                transaction {
+                    MangaTable
+                        .select(MangaTable.sourceReference)
+                        .where { MangaTable.id eq mangaId }
+                        .first()
+                        .get(MangaTable.sourceReference)
+                }
+
+            if (sourceId == LocalSource.ID) {
+                return@launch
+            }
+
+            try {
+                if (inLibrary) {
+                    ThumbnailDownloadHelper.download(mangaId)
+                } else {
+                    ThumbnailDownloadHelper.delete(mangaId)
+                }
+            } catch (e: Exception) {
+                // ignore
             }
         }
     }

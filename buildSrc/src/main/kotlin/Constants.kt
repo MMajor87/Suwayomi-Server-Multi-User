@@ -7,27 +7,29 @@ import java.io.BufferedReader
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-const val kotlinVersion = "1.7.20"
-
 const val MainClass = "suwayomi.tachidesk.MainKt"
 
 // should be bumped with each stable release
-val tachideskVersion = System.getenv("ProductVersion") ?: "v0.6.6"
+val getTachideskVersion = { "v2.1.${getCommitCount()}" }
 
-val webUIRevisionTag = System.getenv("WebUIRevision") ?: "r963"
+val webUIRevisionTag = "r2643"
 
-// counts commits on the master branch
-val tachideskRevision = runCatching {
-    System.getenv("ProductRevision") ?: Runtime
-        .getRuntime()
-        .exec("git rev-list HEAD --count")
-        .let { process ->
-            process.waitFor()
-            val output = process.inputStream.use {
-                it.bufferedReader().use(BufferedReader::readText)
+private val getCommitCount = {
+    runCatching {
+        ProcessBuilder()
+            .command("git", "rev-list", "HEAD", "--count")
+            .start()
+            .let { process ->
+                process.waitFor()
+                val output = process.inputStream.use {
+                    it.bufferedReader().use(BufferedReader::readText)
+                }
+                process.destroy()
+                output.trim()
             }
-            process.destroy()
-            "r" + output.trim()
-        }
-}.getOrDefault("r0")
+    }.getOrDefault("0")
+}
+
+// counts commits on the current checked out branch
+val getTachideskRevision = { "r${getCommitCount()}" }
 

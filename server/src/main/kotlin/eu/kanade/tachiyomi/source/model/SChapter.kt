@@ -1,9 +1,10 @@
+@file:Suppress("ktlint:standard:property-naming")
+
 package eu.kanade.tachiyomi.source.model
 
 import java.io.Serializable
 
 interface SChapter : Serializable {
-
     var url: String
 
     var name: String
@@ -23,8 +24,6 @@ interface SChapter : Serializable {
     }
 
     companion object {
-        fun create(): SChapter {
-            return SChapterImpl()
-        }
+        fun create(): SChapter = SChapterImpl()
     }
 }

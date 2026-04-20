@@ -7,124 +7,130 @@ package suwayomi.tachidesk.manga.impl
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import eu.kanade.tachiyomi.source.local.LocalSource
 import eu.kanade.tachiyomi.source.model.MangasPage
+import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.insertAndGetId
-import org.jetbrains.exposed.sql.select
+import org.jetbrains.exposed.sql.batchInsert
+import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.statements.BatchUpdateStatement
 import org.jetbrains.exposed.sql.transactions.transaction
-import suwayomi.tachidesk.manga.impl.Manga.getMangaMetaMap
-import suwayomi.tachidesk.manga.impl.util.lang.awaitSingle
 import suwayomi.tachidesk.manga.impl.util.source.GetCatalogueSource.getCatalogueSourceOrStub
-import suwayomi.tachidesk.manga.model.dataclass.MangaDataClass
 import suwayomi.tachidesk.manga.model.dataclass.PagedMangaListDataClass
-import suwayomi.tachidesk.manga.model.dataclass.toGenreList
-import suwayomi.tachidesk.manga.model.table.MangaStatus
 import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.manga.model.table.toDataClass
+import java.time.Instant
 
 object MangaList {
-    fun proxyThumbnailUrl(mangaId: Int): String {
-        return "/api/v1/manga/$mangaId/thumbnail"
-    }
+    fun proxyThumbnailUrl(mangaId: Int): String = "/api/v1/manga/$mangaId/thumbnail"
 
-    suspend fun getMangaList(sourceId: Long, pageNum: Int = 1, popular: Boolean): PagedMangaListDataClass {
+    suspend fun getMangaList(
+        sourceId: Long,
+        pageNum: Int = 1,
+        popular: Boolean,
+    ): PagedMangaListDataClass {
         require(pageNum > 0) {
             "pageNum = $pageNum is not in valid range"
         }
         val source = getCatalogueSourceOrStub(sourceId)
-        val mangasPage = if (popular) {
-            source.fetchPopularManga(pageNum).awaitSingle()
-        } else {
-            if (source.supportsLatest) {
-                source.fetchLatestUpdates(pageNum).awaitSingle()
+        val mangasPage =
+            if (popular) {
+                source.getPopularManga(pageNum)
             } else {
-                throw Exception("Source $source doesn't support latest")
+                if (source.supportsLatest) {
+                    source.getLatestUpdates(pageNum)
+                } else {
+                    throw Exception("Source $source doesn't support latest")
+                }
             }
-        }
         return mangasPage.processEntries(sourceId)
     }
 
-    fun MangasPage.processEntries(sourceId: Long): PagedMangaListDataClass {
-        val mangasPage = this
-        val mangaList = transaction {
-            return@transaction mangasPage.mangas.map { manga ->
-                var mangaEntry = MangaTable.select {
-                    (MangaTable.url eq manga.url) and (MangaTable.sourceReference eq sourceId)
-                }.firstOrNull()
-                if (mangaEntry == null) { // create manga entry
-                    val mangaId = MangaTable.insertAndGetId {
-                        it[url] = manga.url
-                        it[title] = manga.title
+    fun MangasPage.insertOrUpdate(sourceId: Long): List<Int> =
+        transaction {
+            val existingMangaUrlsToId =
+                MangaTable
+                    .selectAll()
+                    .where {
+                        (MangaTable.sourceReference eq sourceId) and
+                            (MangaTable.url inList mangas.map { it.url })
+                    }.associateBy { it[MangaTable.url] }
+            val existingMangaUrls = existingMangaUrlsToId.map { it.key }
 
-                        it[artist] = manga.artist
-                        it[author] = manga.author
-                        it[description] = manga.description
-                        it[genre] = manga.genre
-                        it[status] = manga.status
-                        it[thumbnail_url] = manga.thumbnail_url
+            val mangasToInsert = mangas.filter { !existingMangaUrls.contains(it.url) }
 
-                        it[sourceReference] = sourceId
-                    }.value
+            val insertedMangaUrlsToId =
+                MangaTable
+                    .batchInsert(mangasToInsert) {
+                        this[MangaTable.url] = it.url
+                        this[MangaTable.title] = it.title
 
-                    mangaEntry = MangaTable.select {
-                        (MangaTable.url eq manga.url) and (MangaTable.sourceReference eq sourceId)
-                    }.first()
+                        this[MangaTable.artist] = it.artist
+                        this[MangaTable.author] = it.author
+                        this[MangaTable.description] = it.description
+                        this[MangaTable.genre] = it.genre
+                        this[MangaTable.status] = it.status
+                        this[MangaTable.thumbnail_url] = it.thumbnail_url
+                        this[MangaTable.updateStrategy] = it.update_strategy.name
 
-                    MangaDataClass(
-                        mangaId,
-                        sourceId.toString(),
+                        this[MangaTable.sourceReference] = sourceId
+                    }.associate { Pair(it[MangaTable.url], it[MangaTable.id].value) }
 
-                        manga.url,
-                        manga.title,
-                        proxyThumbnailUrl(mangaId),
-                        mangaEntry[MangaTable.thumbnailUrlLastFetched],
+            // delete thumbnail in case cached data still exists
+            insertedMangaUrlsToId.forEach { (_, id) -> Manga.clearThumbnail(id) }
 
-                        manga.initialized,
+            val mangaToUpdate =
+                mangas
+                    .mapNotNull { sManga ->
+                        existingMangaUrlsToId[sManga.url]?.let { sManga to it }
+                    }.filterNot { (_, resultRow) ->
+                        resultRow[MangaTable.inLibrary] && resultRow[MangaTable.sourceReference] != LocalSource.ID
+                    }
 
-                        manga.artist,
-                        manga.author,
-                        manga.description,
-                        manga.genre.toGenreList(),
-                        MangaStatus.valueOf(manga.status).name,
-                        false, // It's a new manga entry
-                        0,
-                        meta = getMangaMetaMap(mangaId),
-                        realUrl = mangaEntry[MangaTable.realUrl],
-                        lastFetchedAt = mangaEntry[MangaTable.lastFetchedAt],
-                        chaptersLastFetchedAt = mangaEntry[MangaTable.chaptersLastFetchedAt],
-                        freshData = true
-                    )
-                } else {
-                    val mangaId = mangaEntry[MangaTable.id].value
-                    MangaDataClass(
-                        mangaId,
-                        sourceId.toString(),
-
-                        manga.url,
-                        manga.title,
-                        proxyThumbnailUrl(mangaId),
-                        mangaEntry[MangaTable.thumbnailUrlLastFetched],
-
-                        true,
-
-                        mangaEntry[MangaTable.artist],
-                        mangaEntry[MangaTable.author],
-                        mangaEntry[MangaTable.description],
-                        mangaEntry[MangaTable.genre].toGenreList(),
-                        MangaStatus.valueOf(mangaEntry[MangaTable.status]).name,
-                        mangaEntry[MangaTable.inLibrary],
-                        mangaEntry[MangaTable.inLibraryAt],
-                        meta = getMangaMetaMap(mangaId),
-                        realUrl = mangaEntry[MangaTable.realUrl],
-                        lastFetchedAt = mangaEntry[MangaTable.lastFetchedAt],
-                        chaptersLastFetchedAt = mangaEntry[MangaTable.chaptersLastFetchedAt],
-                        freshData = false
-                    )
+            if (mangaToUpdate.isNotEmpty()) {
+                BatchUpdateStatement(MangaTable).apply {
+                    mangaToUpdate.forEach { (sManga, manga) ->
+                        addBatch(EntityID(manga[MangaTable.id].value, MangaTable))
+                        this[MangaTable.title] = sManga.title
+                        this[MangaTable.artist] = sManga.artist ?: manga[MangaTable.artist]
+                        this[MangaTable.author] = sManga.author ?: manga[MangaTable.author]
+                        this[MangaTable.description] = sManga.description ?: manga[MangaTable.description]
+                        this[MangaTable.genre] = sManga.genre ?: manga[MangaTable.genre]
+                        this[MangaTable.status] = sManga.status
+                        this[MangaTable.thumbnail_url] = sManga.thumbnail_url ?: manga[MangaTable.thumbnail_url]
+                        this[MangaTable.updateStrategy] = sManga.update_strategy.name
+                        if (!sManga.thumbnail_url.isNullOrEmpty() && manga[MangaTable.thumbnail_url] != sManga.thumbnail_url) {
+                            this[MangaTable.thumbnailUrlLastFetched] = Instant.now().epochSecond
+                            Manga.clearThumbnail(manga[MangaTable.id].value)
+                        } else {
+                            this[MangaTable.thumbnailUrlLastFetched] =
+                                manga[MangaTable.thumbnailUrlLastFetched]
+                        }
+                    }
+                    execute(this@transaction)
                 }
             }
+
+            val mangaUrlsToId =
+                existingMangaUrlsToId
+                    .mapValues { it.value[MangaTable.id].value } + insertedMangaUrlsToId
+
+            mangas.map { manga ->
+                mangaUrlsToId[manga.url]
+                    ?: throw Exception("MangaList::insertOrGet($sourceId): Something went wrong inserting browsed source mangas")
+            }
         }
+
+    fun MangasPage.processEntries(sourceId: Long): PagedMangaListDataClass {
+        val mangasPage = this
+        val mangaList =
+            transaction {
+                val mangaIds = insertOrUpdate(sourceId)
+                return@transaction MangaTable.selectAll().where { MangaTable.id inList mangaIds }.map { MangaTable.toDataClass(it) }
+            }
         return PagedMangaListDataClass(
             mangaList,
-            mangasPage.hasNextPage
+            mangasPage.hasNextPage,
         )
     }
 }

@@ -1,5 +1,7 @@
 package suwayomi.tachidesk.server.database.migration
 
+import suwayomi.tachidesk.server.database.migration.helpers.RenameFieldMigration
+
 /*
  * Copyright (C) Contributors to the Suwayomi project
  *
@@ -7,11 +9,10 @@ package suwayomi.tachidesk.server.database.migration
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import de.neonew.exposed.migrations.helpers.RenameFieldMigration
-
 @Suppress("ClassName", "unused")
-class M0003_DefaultCategory : RenameFieldMigration(
-    "Category",
-    "is_landing",
-    "is_default"
-)
+class M0003_DefaultCategory :
+    RenameFieldMigration(
+        "Category",
+        "is_landing",
+        "is_default",
+    )

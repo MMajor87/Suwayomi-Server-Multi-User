@@ -1,16 +1,15 @@
 package masstest
 
 import eu.kanade.tachiyomi.source.online.HttpSource
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
-import mu.KotlinLogging
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import suwayomi.tachidesk.manga.impl.Source
 import suwayomi.tachidesk.manga.impl.extension.Extension
 import suwayomi.tachidesk.manga.impl.extension.ExtensionsList
-import suwayomi.tachidesk.manga.impl.util.lang.awaitSingle
 import suwayomi.tachidesk.manga.impl.util.source.GetCatalogueSource
 import suwayomi.tachidesk.server.applicationSetup
 import suwayomi.tachidesk.test.BASE_PATH
@@ -40,9 +39,11 @@ class CloudFlareTest {
                 Unit
             }
 
-            nhentai = Source.getSourceList()
-                .firstNotNullOf { it.id.toLong().takeIf { it == 3122156392225024195L } }
-                .let(GetCatalogueSource::getCatalogueSourceOrNull) as HttpSource
+            nhentai =
+                Source
+                    .getSourceList()
+                    .firstNotNullOf { it.id.toLong().takeIf { it == 3122156392225024195L } }
+                    .let(GetCatalogueSource::getCatalogueSourceOrNull) as HttpSource
         }
         setLoggingEnabled(true)
     }
@@ -50,9 +51,10 @@ class CloudFlareTest {
     private val logger = KotlinLogging.logger {}
 
     @Test
-    fun `test nhentai browse`() = runTest {
-        assert(nhentai.fetchPopularManga(1).awaitSingle().mangas.isNotEmpty()) {
-            "NHentai results were empty"
+    fun `test nhentai browse`() =
+        runTest {
+            assert(nhentai.getPopularManga(1).mangas.isNotEmpty()) {
+                "NHentai results were empty"
+            }
         }
-    }
 }

@@ -1,26 +1,25 @@
 package suwayomi.tachidesk.manga.controller
 
-import io.javalin.http.HttpCode
+import io.github.oshai.kotlinlogging.KotlinLogging
+import io.javalin.http.HttpStatus
 import io.javalin.websocket.WsConfig
-import mu.KotlinLogging
-import org.kodein.di.DI
-import org.kodein.di.conf.global
-import org.kodein.di.instance
 import suwayomi.tachidesk.manga.impl.Category
-import suwayomi.tachidesk.manga.impl.CategoryManga
 import suwayomi.tachidesk.manga.impl.Chapter
 import suwayomi.tachidesk.manga.impl.update.IUpdater
 import suwayomi.tachidesk.manga.impl.update.UpdateStatus
 import suwayomi.tachidesk.manga.impl.update.UpdaterSocket
-import suwayomi.tachidesk.manga.model.dataclass.CategoryDataClass
 import suwayomi.tachidesk.manga.model.dataclass.MangaChapterDataClass
-import suwayomi.tachidesk.manga.model.dataclass.MangaDataClass
 import suwayomi.tachidesk.manga.model.dataclass.PaginatedList
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.JavalinSetup.future
+import suwayomi.tachidesk.server.JavalinSetup.getAttribute
+import suwayomi.tachidesk.server.user.requireUser
 import suwayomi.tachidesk.server.util.formParam
 import suwayomi.tachidesk.server.util.handler
 import suwayomi.tachidesk.server.util.pathParam
 import suwayomi.tachidesk.server.util.withOperation
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /*
  * Copyright (C) Contributors to the Suwayomi project
@@ -33,25 +32,27 @@ object UpdateController {
     private val logger = KotlinLogging.logger { }
 
     /** get recently updated manga chapters */
-    val recentChapters = handler(
-        pathParam<Int>("pageNum"),
-        documentWith = {
-            withOperation {
-                summary("Updates fetch")
-                description("Get recently updated manga chapters")
-            }
-        },
-        behaviorOf = { ctx, pageNum ->
-            ctx.future(
-                future {
-                    Chapter.getRecentChapters(pageNum)
+    val recentChapters =
+        handler(
+            pathParam<Int>("pageNum"),
+            documentWith = {
+                withOperation {
+                    summary("Updates fetch")
+                    description("Get recently updated manga chapters")
                 }
-            )
-        },
-        withResults = {
-            json<PagedMangaChapterListDataClass>(HttpCode.OK)
-        }
-    )
+            },
+            behaviorOf = { ctx, pageNum ->
+                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                ctx.future {
+                    future {
+                        Chapter.getRecentChapters(pageNum)
+                    }.thenApply { ctx.json(it) }
+                }
+            },
+            withResults = {
+                json<PagedMangaChapterListDataClass>(HttpStatus.OK)
+            },
+        )
 
     /**
      * Class made for handling return type in the documentation for [recentChapters],
@@ -59,50 +60,48 @@ object UpdateController {
      */
     private class PagedMangaChapterListDataClass : PaginatedList<MangaChapterDataClass>(emptyList(), false)
 
-    val categoryUpdate = handler(
-        formParam<Int?>("categoryId"),
-        documentWith = {
-            withOperation {
-                summary("Updater start")
-                description("Starts the updater")
-            }
-        },
-        behaviorOf = { ctx, categoryId ->
-            if (categoryId == null) {
-                logger.info { "Adding Library to Update Queue" }
-                addCategoriesToUpdateQueue(Category.getCategoryList(), true)
-            } else {
-                val category = Category.getCategoryById(categoryId)
-                if (category != null) {
-                    addCategoriesToUpdateQueue(listOf(category), true)
-                } else {
-                    logger.info { "No Category found" }
-                    ctx.status(HttpCode.BAD_REQUEST)
+    val categoryUpdate =
+        handler(
+            formParam<Int?>("categoryId"),
+            documentWith = {
+                withOperation {
+                    summary("Updater start")
+                    description("Starts the updater")
                 }
-            }
-        },
-        withResults = {
-            httpCode(HttpCode.OK)
-            httpCode(HttpCode.BAD_REQUEST)
-        }
-    )
-
-    private fun addCategoriesToUpdateQueue(categories: List<CategoryDataClass>, clear: Boolean = false) {
-        val updater by DI.global.instance<IUpdater>()
-        if (clear) {
-            updater.reset()
-        }
-        categories
-            .flatMap { CategoryManga.getCategoryMangaList(it.id) }
-            .distinctBy { it.id }
-            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER, MangaDataClass::title))
-            .forEach { manga ->
-                updater.addMangaToQueue(manga)
-            }
-    }
+            },
+            behaviorOf = { ctx, categoryId ->
+                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val updater = Injekt.get<IUpdater>()
+                if (categoryId == null) {
+                    logger.info { "Adding Library to Update Queue" }
+                    updater.addCategoriesToUpdateQueue(
+                        Category.getCategoryList(),
+                        clear = true,
+                        forceAll = false,
+                    )
+                } else {
+                    val category = Category.getCategoryById(categoryId)
+                    if (category != null) {
+                        updater.addCategoriesToUpdateQueue(
+                            listOf(category),
+                            clear = true,
+                            forceAll = true,
+                        )
+                    } else {
+                        logger.info { "No Category found" }
+                        ctx.status(HttpStatus.BAD_REQUEST)
+                    }
+                }
+            },
+            withResults = {
+                httpCode(HttpStatus.OK)
+                httpCode(HttpStatus.BAD_REQUEST)
+            },
+        )
 
     fun categoryUpdateWS(ws: WsConfig) {
         ws.onConnect { ctx ->
+            ctx.getAttribute(Attribute.TachideskUser).requireUser()
             UpdaterSocket.addClient(ctx)
         }
         ws.onMessage { ctx ->
@@ -113,42 +112,46 @@ object UpdateController {
         }
     }
 
-    val updateSummary = handler(
-        documentWith = {
-            withOperation {
-                summary("Updater summary")
-                description("Gets the latest updater summary")
-            }
-        },
-        behaviorOf = { ctx ->
-            val updater by DI.global.instance<IUpdater>()
-            ctx.json(updater.status.value)
-        },
-        withResults = {
-            json<UpdateStatus>(HttpCode.OK)
-        }
-    )
-
-    val reset = handler(
-        documentWith = {
-            withOperation {
-                summary("Updater reset")
-                description("Stops and resets the Updater")
-            }
-        },
-        behaviorOf = { ctx ->
-            val updater by DI.global.instance<IUpdater>()
-            logger.info { "Resetting Updater" }
-            ctx.future(
-                future {
-                    updater.reset()
-                }.thenApply {
-                    ctx.status(HttpCode.OK)
+    val updateSummary =
+        handler(
+            documentWith = {
+                withOperation {
+                    summary("Updater summary")
+                    description("Gets the latest updater summary")
                 }
-            )
-        },
-        withResults = {
-            httpCode(HttpCode.OK)
-        }
-    )
+            },
+            behaviorOf = { ctx ->
+                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val updater = Injekt.get<IUpdater>()
+                ctx.json(updater.statusDeprecated.value)
+            },
+            withResults = {
+                json<UpdateStatus>(HttpStatus.OK)
+            },
+        )
+
+    val reset =
+        handler(
+            documentWith = {
+                withOperation {
+                    summary("Updater reset")
+                    description("Stops and resets the Updater")
+                }
+            },
+            behaviorOf = { ctx ->
+                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val updater = Injekt.get<IUpdater>()
+                logger.info { "Resetting Updater" }
+                ctx.future {
+                    future {
+                        updater.reset()
+                    }.thenApply {
+                        ctx.status(HttpStatus.OK)
+                    }
+                }
+            },
+            withResults = {
+                httpCode(HttpStatus.OK)
+            },
+        )
 }

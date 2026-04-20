@@ -2,9 +2,10 @@
 .gradle
 .idea
 gradle.properties
-
+.fleet
 # But we need these
 !.idea/runConfigurations
+.kotlin
 
 # Ignore Gradle build output directory
 build
@@ -19,3 +20,4 @@ scripts/OpenJDK*
 scripts/zulu*
 scripts/electron-*
 scripts/rcedit-*
+scripts/resources/*.so
