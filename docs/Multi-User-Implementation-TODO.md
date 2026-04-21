@@ -201,13 +201,13 @@ The existing server exposes JWT access tokens + refresh tokens via GraphQL. The 
 
 ### 7.3 User Settings Panel (all authenticated users)
 
-- [ ] Add a "My Account" or "Profile" entry to the existing Settings sidebar/drawer
-- [ ] Implement a `UserSettingsPanel` component with:
-  - [ ] Display current username and role (read-only)
-  - [ ] Change password form (current password + new password + confirm; validates policy client-side before submit; calls `updateUserAccount` mutation)
-  - [ ] "Sign out of all devices" button → calls `invalidateUserSessions` mutation, then logs out locally
-  - [ ] "Sign out" button → calls revoke-token mutation and redirects to LoginScreen
-- [ ] Show a non-dismissible banner when the account is deactivated and the JWT is still valid (server returns `DEACTIVATED` error); force logout in that case
+- [x] "My Account" entry added at the top of the Settings list with `AccountCircle` icon and a visual divider below it
+- [x] `AccountSettings` screen (`/settings/account`) implemented:
+  - [x] Profile section: username (read-only) and role (read-only, displayed as a MUI `Chip`)
+  - [x] Change Password section: current/new/confirm password fields with client-side validation (min 10 chars mirrors server `PasswordSecurity.PASSWORD_MIN_LENGTH`; confirm match check); on success, calls `changePassword` mutation then clears tokens and navigates to login (server invalidates all sessions on password change)
+  - [x] Session section: "Sign out of all devices" button calls `logout` mutation (which invalidates all sessions server-side) then clears tokens and navigates to login
+- [x] `CHANGE_PASSWORD` mutation added to client; `useChangePassword()` added to `RequestManager`
+- [x] `UserIdentityLoader` updated to force logout with a toast when `me.isActive === false` (handles the deactivated-while-logged-in edge case)
 
 ### 7.4 Admin User Management Panel (ADMIN role only)
 
