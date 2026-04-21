@@ -180,8 +180,8 @@ make it the new default bundled web UI — while keeping WEBUI / VUI / CUSTOM se
 
 ### 7.1 Repository and Build Setup
 
-- [ ] Fork `Suwayomi/Suwayomi-WebUI` to `MMajor87/Suwayomi-WebUI-MultiUser` — **manual step**: go to https://github.com/Suwayomi/Suwayomi-WebUI and click Fork; no `gh` CLI available
-- [ ] Add the fork as a git submodule at `webUI/` and pin to tag `v20251230.01`: `git submodule add https://github.com/MMajor87/Suwayomi-WebUI-MultiUser.git webUI && cd webUI && git checkout v20251230.01 && cd .. && git add .gitmodules webUI && git commit -m "chore: add WebUI submodule at v20251230.01"`
+- [x] Fork `Suwayomi/Suwayomi-WebUI` to `MMajor87/Suwayomi-WebUI-MultiUser`
+- [x] Add the fork as a git submodule at `webUI/` pinned to tag `v20251230.01` (commit `3fb4d530`); `.gitmodules` committed
 - [x] Add Gradle tasks `buildWebUIApp` (runs `npm ci && npm run build` in `webUI/`) and `bundleWebUI` (zips `webUI/build/` to `server/src/main/resources/WebUI.zip`); both gracefully skip when the submodule is not initialised (`server/build.gradle.kts`)
 - [x] `processResources` updated with `mustRunAfter("bundleWebUI")` — downstream tasks unchanged
 - [x] CI updated (`build_pull_request.yml`, `build_push.yml`, `publish.yml`): `submodules: recursive` added to checkout; `actions/setup-node@v4` (Node 22) added; build command changed to `:server:bundleWebUI :server:shadowJar`
@@ -192,12 +192,12 @@ make it the new default bundled web UI — while keeping WEBUI / VUI / CUSTOM se
 
 The existing server exposes JWT access tokens + refresh tokens via GraphQL. The React app needs to carry them.
 
-- [ ] Add an `AuthContext` (React context + provider) that holds `accessToken`, `userId`, `role`, and `isLoggedIn`; wrap the app root with it
-- [ ] Implement `POST /api/v1/auth/login` call (or existing GraphQL `login` mutation) in an `authService`; store access token in memory (not localStorage) and refresh token in an `httpOnly`-safe mechanism consistent with what the server already sets
-- [ ] Add a `LoginScreen` component that is rendered when `!isLoggedIn` in place of the main app; redirect back to the originally requested route after successful login
-- [ ] Add a silent token-refresh flow: intercept 401 responses from the GraphQL client, call the refresh endpoint, retry the original request once; redirect to `LoginScreen` on double-401
-- [ ] Add a `LogoutButton` (header or profile menu) that calls the revoke mutation, clears the in-memory token, and navigates to `LoginScreen`
-- [ ] Gate all existing API calls behind the `AuthContext` — no anonymous access to library/chapter/tracker data; existing unauthenticated flows that the current WebUI uses must be updated to pass the bearer token
+- [x] `AuthManager` extended with `userId`, `role`, `username` fields; `setUserIdentity`, `clearUserIdentity`, `isAdmin` helpers added; `removeTokens` now clears identity — replaces need for a separate `AuthContext`
+- [x] `USER_LOGOUT` GraphQL mutation added to client; `USER_ME` query added (`GET_ME`); `USER_REFRESH` updated to request rotated `refreshToken`; `BaseClient.refreshAccessToken` stores the rotated refresh token on success
+- [x] `LoginScreen` already existed (`LoginPage.tsx`); redirect-after-login behavior was already in place; `UserIdentityLoader` component added — fetches `me` in the background once access token is set and populates `AuthManager`
+- [x] Silent token-refresh flow already existed via `errorLink` (catches `UnauthorizedException`) and `BaseClient.refreshAccessToken`; fixed to also rotate and store the new `refreshToken`
+- [x] `LogoutButton` component added to `DefaultNavBar` as a permanent AppBar element; calls `logout` mutation, clears tokens and identity, navigates to login
+- [x] `AuthGuard` fixed — now always sets `authRequired = true` (multi-user server always enforces JWT); `PrivateRoutes` redirects to login whenever access and refresh tokens are absent
 
 ### 7.3 User Settings Panel (all authenticated users)
 
