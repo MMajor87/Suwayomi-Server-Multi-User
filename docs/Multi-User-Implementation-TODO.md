@@ -162,8 +162,8 @@ The following require infrastructure beyond the H2 unit test setup and are expli
 - [x] Migration tests on sample pre-multi-user DB snapshots (`LegacySnapshotMigrationTest` + `fixtures/pre-multi-user/legacy_full_snapshot.sql`)
 - [x] Tests for migration restart safety — partial-migration simulation added in `MigrationRestartSafetyTest` (interrupt/resume around M0058/M0059)
 - [x] Non-REST surface isolation (`OPDS`, websocket endpoints, GraphQL subscriptions) — covered by `NonRestSurfaceIsolationIntegrationTest` (HTTP server + WS/GraphQL integration assertions)
-- [ ] Performance sanity tests for user-scoped queries and indexes — requires a load framework and stable row-count baselines
-- [ ] Per-user tracker secret isolation tests — tracker auth secrets live in Android SharedPreferences (per-userId key); no preference-isolation test infra currently exists
+- [x] Performance sanity tests for user-scoped queries and indexes — `UserScopedQueryPerformanceTest` covers `getAccessibleMangaIds`, `getAccessibleChapterIds`, and `getUserChapterStateMap` under 500-row candidate sets with 5 s budget
+- [x] Per-user tracker secret isolation tests — `TrackerSecretIsolationTest` exercises credential/token isolation, legacy-key fallback, and `migrateLegacySecretsToUser` using a stub `Tracker` subclass against the real SharedPreferences singleton
 
 ## Phase 6: WebUI Admin UX
 
@@ -171,6 +171,93 @@ The following require infrastructure beyond the H2 unit test setup and are expli
 - [x] Build User Management view: list users, create user, update role/active status, deactivate/reactivate, force sign-out, delete — served at `/admin/users.html` via `AdminUsers.kte` using GraphQL API
 - [x] Gate User Management route for non-admin users: server-side check in `JavalinSetup.kt` — non-admins get 403, unauthenticated SIMPLE_LOGIN users redirected to `/login.html`
 - [x] Add WebUI auth-flow handling for first-run `UI_LOGIN` bootstrap/login states: `/setup.html` (`Setup.kte`) — detects zero users via `needsSetup` GraphQL query and creates initial admin; `/admin/users.html` redirects to `/setup.html` when no users exist
+
+## Phase 7: Integrated React WebUI with Multi-User Support
+
+Goal: fork Suwayomi-WebUI into this project, add user-aware UI features (login,
+user settings, admin user management), build it as part of the Gradle pipeline, and
+make it the new default bundled web UI — while keeping WEBUI / VUI / CUSTOM selectable.
+
+### 7.1 Repository and Build Setup
+
+- [ ] Fork `Suwayomi/Suwayomi-WebUI` to `MMajor87/Suwayomi-WebUI-MultiUser` — **manual step**: go to https://github.com/Suwayomi/Suwayomi-WebUI and click Fork; no `gh` CLI available
+- [ ] Add the fork as a git submodule at `webUI/` and pin to tag `v20251230.01`: `git submodule add https://github.com/MMajor87/Suwayomi-WebUI-MultiUser.git webUI && cd webUI && git checkout v20251230.01 && cd .. && git add .gitmodules webUI && git commit -m "chore: add WebUI submodule at v20251230.01"`
+- [x] Add Gradle tasks `buildWebUIApp` (runs `npm ci && npm run build` in `webUI/`) and `bundleWebUI` (zips `webUI/build/` to `server/src/main/resources/WebUI.zip`); both gracefully skip when the submodule is not initialised (`server/build.gradle.kts`)
+- [x] `processResources` updated with `mustRunAfter("bundleWebUI")` — downstream tasks unchanged
+- [x] CI updated (`build_pull_request.yml`, `build_push.yml`, `publish.yml`): `submodules: recursive` added to checkout; `actions/setup-node@v4` (Node 22) added; build command changed to `:server:bundleWebUI :server:shadowJar`
+- [x] `Constants.kt` — added `getWebUIBuildCommit` (reads submodule HEAD SHA via `git rev-parse HEAD:webUI`, falls back to `"unknown"`); `BuildConfig` gains `WEBUI_BUILD_COMMIT` field
+- [x] Dev loop documented in `docs/WebUI-Development.md`: the existing WebUI uses `VITE_SERVER_URL_DEFAULT=http://localhost:4567` for direct API access — no proxy config needed; start server → `npm run dev` in `webUI/` → hot reload on `localhost:3000`
+
+### 7.2 Auth Layer in the React App
+
+The existing server exposes JWT access tokens + refresh tokens via GraphQL. The React app needs to carry them.
+
+- [ ] Add an `AuthContext` (React context + provider) that holds `accessToken`, `userId`, `role`, and `isLoggedIn`; wrap the app root with it
+- [ ] Implement `POST /api/v1/auth/login` call (or existing GraphQL `login` mutation) in an `authService`; store access token in memory (not localStorage) and refresh token in an `httpOnly`-safe mechanism consistent with what the server already sets
+- [ ] Add a `LoginScreen` component that is rendered when `!isLoggedIn` in place of the main app; redirect back to the originally requested route after successful login
+- [ ] Add a silent token-refresh flow: intercept 401 responses from the GraphQL client, call the refresh endpoint, retry the original request once; redirect to `LoginScreen` on double-401
+- [ ] Add a `LogoutButton` (header or profile menu) that calls the revoke mutation, clears the in-memory token, and navigates to `LoginScreen`
+- [ ] Gate all existing API calls behind the `AuthContext` — no anonymous access to library/chapter/tracker data; existing unauthenticated flows that the current WebUI uses must be updated to pass the bearer token
+
+### 7.3 User Settings Panel (all authenticated users)
+
+- [ ] Add a "My Account" or "Profile" entry to the existing Settings sidebar/drawer
+- [ ] Implement a `UserSettingsPanel` component with:
+  - [ ] Display current username and role (read-only)
+  - [ ] Change password form (current password + new password + confirm; validates policy client-side before submit; calls `updateUserAccount` mutation)
+  - [ ] "Sign out of all devices" button → calls `invalidateUserSessions` mutation, then logs out locally
+  - [ ] "Sign out" button → calls revoke-token mutation and redirects to LoginScreen
+- [ ] Show a non-dismissible banner when the account is deactivated and the JWT is still valid (server returns `DEACTIVATED` error); force logout in that case
+
+### 7.4 Admin User Management Panel (ADMIN role only)
+
+Replaces / supplements the existing server-rendered `/admin/users.html` page — the React version lives inside the SPA and uses the same GraphQL API.
+
+- [ ] Gate the "User Management" settings entry behind `role === 'ADMIN'`; non-admin users never see the menu item
+- [ ] Implement a `UserManagementPanel` component with a paginated user list table showing: username, role, active status, created date
+- [ ] Add "Create User" modal/drawer: username, password, role selector (ADMIN / USER), active toggle; calls `createUserAccount` mutation; validates password policy client-side
+- [ ] Add inline edit row actions:
+  - [ ] Edit username and role (calls `updateUserAccount` mutation)
+  - [ ] Deactivate / Reactivate toggle (calls `deactivateUserAccount` / `reactivateUserAccount` mutation)
+  - [ ] Force sign-out (calls `invalidateUserSessions` mutation for that user)
+  - [ ] Delete (calls `deleteUserAccount` mutation; confirmation dialog; disabled when only active admin remains)
+- [ ] Disable destructive actions (delete / deactivate / role-downgrade) on the currently authenticated admin's own account when they are the last active admin; mirror the server-side guard in the UI
+- [ ] Display server-side error messages (last-admin guard, duplicate username, password policy) as form-level validation feedback
+
+### 7.5 First-Run Setup Flow in the React App
+
+The existing `/setup.html` JTE page handles first-run. The React app should handle the same flow natively.
+
+- [ ] On app load, call the `needsSetup` GraphQL query (no auth required); if `true`, redirect to a `SetupScreen` component before showing `LoginScreen`
+- [ ] `SetupScreen` renders a single-step form: username + password + confirm for the initial admin account; calls `setupInitialAdminUser` mutation; on success, transitions to `LoginScreen`
+- [ ] After the React setup flow is in place, decide whether to keep the JTE `/setup.html` page as a fallback for non-SPA clients or remove it; document the decision
+
+### 7.6 WebUIFlavor Registration and Default Change
+
+- [ ] Add a new `WebUIFlavor` enum value `BUNDLED` (or rename the existing embedded path) that points to the locally-built WebUI rather than the GitHub-release download path
+- [ ] Change the default value of `serverConfig.webUIFlavor` from `WEBUI` (GitHub download) to `BUNDLED` (local build) so the multi-user WebUI is served out of the box with no extra download
+- [ ] Keep `WEBUI`, `VUI`, and `CUSTOM` selectable; when any of those is chosen, the download-from-GitHub path in `WebInterfaceManager` is unchanged
+- [ ] Update `WebInterfaceManager.extractBundledWebUI()` to serve the `BUNDLED` flavor's zip and skip the GitHub update-check for it (version is pinned at build time via `WEBUI_BUILD_COMMIT`)
+- [ ] Add a migration: if an existing install has `webUIFlavor = WEBUI` and the user has never changed it from default, migrate it to `BUNDLED` on first startup with the new build; otherwise leave it unchanged (respects explicit user choice)
+- [ ] Expose the active `webUIFlavor` and the embedded build commit in the server's `about` GraphQL query so the UI can display "Built-in (multi-user)" vs. "Suwayomi-WebUI r2643" etc.
+
+### 7.7 Keep JTE Admin Pages as Fallback
+
+The server-rendered `/admin/users.html`, `/setup.html`, and `/login.html` JTE pages remain in place.
+
+- [ ] Confirm JTE pages still work correctly when `BUNDLED` flavor is active (they are served at distinct routes and are independent of the SPA)
+- [ ] Add a link/banner in `/admin/users.html` pointing to the new React "User Management" panel for users who navigate there directly
+- [ ] Evaluate whether `/login.html` is still needed once the React `LoginScreen` is in place; keep it for `SIMPLE_LOGIN` mode where the React app may not intercept the auth flow
+
+### 7.8 Testing
+
+- [ ] Unit tests for `AuthContext`: initial state (unauthenticated), login success/failure, silent refresh on 401, logout
+- [ ] Unit tests for `UserSettingsPanel`: password change submission, "sign out all devices" button, deactivated-account banner
+- [ ] Unit tests for `UserManagementPanel`: user list renders, create modal validates policy, delete confirmation, last-admin guard disables delete button
+- [ ] Unit tests for `SetupScreen`: renders when `needsSetup = true`, hides when `needsSetup = false`, form submission calls correct mutation
+- [ ] E2E test (Playwright or Cypress): full login → user settings → password change → re-login with new password
+- [ ] E2E test: admin creates a user, deactivates them, verifies deactivated user cannot log in
+- [ ] E2E test: first-run setup flow (no users → SetupScreen → create admin → LoginScreen → library)
 
 ## Open Decisions (must close before Phase 2 completion)
 

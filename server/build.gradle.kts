@@ -156,6 +156,7 @@ buildConfig {
     buildConfigField("long", "BUILD_TIME", Instant.now().epochSecond.toString())
 
     buildConfigField("String", "WEBUI_TAG", quoteWrap(webUIRevisionTag))
+    buildConfigField("String", "WEBUI_BUILD_COMMIT", quoteWrap(getWebUIBuildCommit()))
 
     buildConfigField("String", "GITHUB", quoteWrap("https://github.com/Suwayomi/Suwayomi-Server"))
     buildConfigField("String", "DISCORD", quoteWrap("https://discord.gg/DDZdqZWaHA"))
@@ -199,6 +200,42 @@ tasks {
     named<Copy>("processResources") {
         duplicatesStrategy = DuplicatesStrategy.INCLUDE
         mustRunAfter("downloadWebUI")
+        mustRunAfter("bundleWebUI")
+    }
+
+    // Builds the forked WebUI React app inside the webUI/ git submodule.
+    // Skipped gracefully when the submodule has not been initialised yet.
+    register<Exec>("buildWebUIApp") {
+        group = "webui"
+        description = "Runs 'npm ci && npm run build' inside the webUI/ submodule."
+
+        val webUIDir = rootProject.file("webUI")
+        enabled = webUIDir.exists() && (webUIDir.list()?.isNotEmpty() == true)
+
+        workingDir(webUIDir)
+
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        if (isWindows) {
+            commandLine("cmd", "/c", "npm ci && npm run build")
+        } else {
+            commandLine("sh", "-c", "npm ci && npm run build")
+        }
+    }
+
+    // Zips the React build output and places it where processResources can pick it up,
+    // replacing the GitHub-downloaded WebUI.zip for this fork's bundled default.
+    register<Zip>("bundleWebUI") {
+        group = "webui"
+        description = "Zips webUI/build/ into server/src/main/resources/WebUI.zip."
+
+        dependsOn("buildWebUIApp")
+
+        val webUIDir = rootProject.file("webUI")
+        enabled = webUIDir.resolve("build").exists()
+
+        from(webUIDir.resolve("build"))
+        archiveFileName.set("WebUI.zip")
+        destinationDirectory.set(file("src/main/resources"))
     }
 
     register<Download>("downloadWebUI") {

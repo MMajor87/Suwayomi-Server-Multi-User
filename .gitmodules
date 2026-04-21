@@ -1,0 +1,3 @@
+[submodule "webUI"]
+	path = webUI
+	url = https://github.com/MMajor87/Suwayomi-WebUI-MultiUser.git
