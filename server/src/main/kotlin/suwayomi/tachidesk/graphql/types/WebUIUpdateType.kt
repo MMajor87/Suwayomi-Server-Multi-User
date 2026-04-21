@@ -1,8 +1,10 @@
 package suwayomi.tachidesk.graphql.types
 
 data class AboutWebUI(
+    val flavor: WebUIFlavor,
     val channel: WebUIChannel,
     val tag: String,
+    val buildCommit: String,
     val updateTimestamp: Long,
 )
 

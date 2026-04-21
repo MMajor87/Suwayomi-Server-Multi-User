@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Context
 import io.github.oshai.kotlinlogging.KotlinLogging
 import suwayomi.tachidesk.graphql.types.AuthMode
+import suwayomi.tachidesk.graphql.types.WebUIChannel
+import suwayomi.tachidesk.graphql.types.WebUIFlavor
 import suwayomi.tachidesk.manga.impl.track.tracker.TrackerPreferences
 import suwayomi.tachidesk.manga.impl.update.IUpdater
 import suwayomi.tachidesk.server.user.findDefaultActiveUser
@@ -168,6 +170,20 @@ private fun migrateTrackerSecretsToUserScopedStorage() {
     preferences.edit().putInt(TRACKER_SECRET_MIGRATION_VERSION_KEY, TRACKER_SECRET_MIGRATION_VERSION).apply()
 }
 
+private fun migrateWebUIFlavorDefaultToBundled() {
+    val isLegacyWebUIDefaultProfile =
+        serverConfig.webUIFlavor.value == WebUIFlavor.WEBUI &&
+            serverConfig.webUIChannel.value == WebUIChannel.STABLE
+    if (!isLegacyWebUIDefaultProfile) {
+        return
+    }
+
+    migrationLogger.info {
+        "Migrating webUIFlavor default from ${WebUIFlavor.WEBUI} to ${WebUIFlavor.BUNDLED}."
+    }
+    serverConfig.webUIFlavor.value = WebUIFlavor.BUNDLED
+}
+
 private val MIGRATIONS =
     listOf<Pair<String, (ApplicationDirs) -> Unit>>(
         "InitialMigration" to { applicationDirs ->
@@ -176,6 +192,9 @@ private val MIGRATIONS =
         },
         "FixGlobalUpdateScheduling" to {
             Injekt.get<IUpdater>().deleteLastAutomatedUpdateTimestamp()
+        },
+        "MigrateWebUIFlavorDefaultToBundled" to {
+            migrateWebUIFlavorDefaultToBundled()
         },
     )
 

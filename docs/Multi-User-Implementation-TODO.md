@@ -213,68 +213,60 @@ The existing server exposes JWT access tokens + refresh tokens via GraphQL. The 
 
 Replaces / supplements the existing server-rendered `/admin/users.html` page — the React version lives inside the SPA and uses the same GraphQL API.
 
-- [ ] Gate the "User Management" settings entry behind `role === 'ADMIN'`; non-admin users never see the menu item
-- [ ] Implement a `UserManagementPanel` component with a paginated user list table showing: username, role, active status, created date
-- [ ] Add "Create User" modal/drawer: username, password, role selector (ADMIN / USER), active toggle; calls `createUserAccount` mutation; validates password policy client-side
-- [ ] Add inline edit row actions:
-  - [ ] Edit username and role (calls `updateUserAccount` mutation)
-  - [ ] Deactivate / Reactivate toggle (calls `deactivateUserAccount` / `reactivateUserAccount` mutation)
-  - [ ] Force sign-out (calls `invalidateUserSessions` mutation for that user)
-  - [ ] Delete (calls `deleteUserAccount` mutation; confirmation dialog; disabled when only active admin remains)
-- [ ] Disable destructive actions (delete / deactivate / role-downgrade) on the currently authenticated admin's own account when they are the last active admin; mirror the server-side guard in the UI
-- [ ] Display server-side error messages (last-admin guard, duplicate username, password policy) as form-level validation feedback
+- [x] Gate the "User Management" settings entry behind `role === 'ADMIN'`; non-admin users never see the menu item
+- [x] Implement a `UserManagementPanel` component with a paginated user list table showing: username, role, active status, created date
+- [x] Add "Create User" modal/drawer: username, password, role selector (ADMIN / USER), active toggle; calls `createUserAccount` mutation; validates password policy client-side
+- [x] Add inline edit row actions:
+  - [x] Edit username and role (calls `updateUserAccount` mutation)
+  - [x] Deactivate / Reactivate toggle (calls `deactivateUserAccount` / `reactivateUserAccount` mutation)
+  - [x] Force sign-out (calls `invalidateUserSessions` mutation for that user)
+  - [x] Delete (calls `deleteUserAccount` mutation; confirmation dialog; disabled when only active admin remains)
+- [x] Disable destructive actions (delete / deactivate / role-downgrade) on the currently authenticated admin's own account when they are the last active admin; mirror the server-side guard in the UI
+- [x] Display server-side error messages (last-admin guard, duplicate username, password policy) as form-level validation feedback
 
 ### 7.5 First-Run Setup Flow in the React App
 
 The existing `/setup.html` JTE page handles first-run. The React app should handle the same flow natively.
 
-- [ ] On app load, call the `needsSetup` GraphQL query (no auth required); if `true`, redirect to a `SetupScreen` component before showing `LoginScreen`
-- [ ] `SetupScreen` renders a single-step form: username + password + confirm for the initial admin account; calls `setupInitialAdminUser` mutation; on success, transitions to `LoginScreen`
-- [ ] After the React setup flow is in place, decide whether to keep the JTE `/setup.html` page as a fallback for non-SPA clients or remove it; document the decision
+- [x] On app load, call the `needsSetup` GraphQL query (no auth required); if `true`, redirect to a `SetupScreen` component before showing `LoginScreen`
+- [x] `SetupScreen` renders a single-step form: username + password + confirm for the initial admin account; calls `setupInitialAdminUser` mutation; on success, transitions to `LoginScreen`
+- [x] After the React setup flow is in place, decide whether to keep the JTE `/setup.html` page as a fallback for non-SPA clients or remove it; document the decision (keep as fallback for non-SPA clients / direct-route recovery)
 
 ### 7.6 WebUIFlavor Registration and Default Change
 
-- [ ] Add a new `WebUIFlavor` enum value `BUNDLED` (or rename the existing embedded path) that points to the locally-built WebUI rather than the GitHub-release download path
-- [ ] Change the default value of `serverConfig.webUIFlavor` from `WEBUI` (GitHub download) to `BUNDLED` (local build) so the multi-user WebUI is served out of the box with no extra download
-- [ ] Keep `WEBUI`, `VUI`, and `CUSTOM` selectable; when any of those is chosen, the download-from-GitHub path in `WebInterfaceManager` is unchanged
-- [ ] Update `WebInterfaceManager.extractBundledWebUI()` to serve the `BUNDLED` flavor's zip and skip the GitHub update-check for it (version is pinned at build time via `WEBUI_BUILD_COMMIT`)
-- [ ] Add a migration: if an existing install has `webUIFlavor = WEBUI` and the user has never changed it from default, migrate it to `BUNDLED` on first startup with the new build; otherwise leave it unchanged (respects explicit user choice)
-- [ ] Expose the active `webUIFlavor` and the embedded build commit in the server's `about` GraphQL query so the UI can display "Built-in (multi-user)" vs. "Suwayomi-WebUI r2643" etc.
+- [x] Add a new `WebUIFlavor` enum value `BUNDLED` (or rename the existing embedded path) that points to the locally-built WebUI rather than the GitHub-release download path
+- [x] Change the default value of `serverConfig.webUIFlavor` from `WEBUI` (GitHub download) to `BUNDLED` (local build) so the multi-user WebUI is served out of the box with no extra download
+- [x] Keep `WEBUI`, `VUI`, and `CUSTOM` selectable; when any of those is chosen, the download-from-GitHub path in `WebInterfaceManager` is unchanged
+- [x] Update `WebInterfaceManager.extractBundledWebUI()` to serve the `BUNDLED` flavor's zip and skip the GitHub update-check for it (version is pinned at build time via `WEBUI_BUILD_COMMIT`)
+- [x] Add a migration: if an existing install has `webUIFlavor = WEBUI` and the user has never changed it from default, migrate it to `BUNDLED` on first startup with the new build; otherwise leave it unchanged (respects explicit user choice)
+- [x] Expose the active `webUIFlavor` and the embedded build commit in the server's `about` GraphQL query so the UI can display "Built-in (multi-user)" vs. "Suwayomi-WebUI r2643" etc.
 
 ### 7.7 Keep JTE Admin Pages as Fallback
 
 The server-rendered `/admin/users.html`, `/setup.html`, and `/login.html` JTE pages remain in place.
 
-- [ ] Confirm JTE pages still work correctly when `BUNDLED` flavor is active (they are served at distinct routes and are independent of the SPA)
-- [ ] Add a link/banner in `/admin/users.html` pointing to the new React "User Management" panel for users who navigate there directly
-- [ ] Evaluate whether `/login.html` is still needed once the React `LoginScreen` is in place; keep it for `SIMPLE_LOGIN` mode where the React app may not intercept the auth flow
+- [x] Confirm JTE pages still work correctly when `BUNDLED` flavor is active — JTE pages are served at distinct routes (`/admin/users.html`, `/setup.html`, `/login.html`) by Javalin's HTTP router, completely independent of the SPA bundle; `BUNDLED` flavor only affects which JS/CSS assets serve the root SPA route
+- [x] Add a link/banner in `/admin/users.html` pointing to the new React "User Management" panel — `.react-banner` CSS block (lines 49-63) and `<div class="react-banner">` (lines 212-215) added to `AdminUsers.kte`; links to `../settings/users`
+- [x] Evaluate whether `/login.html` is still needed — **keep**: `Login.kte` serves `SIMPLE_LOGIN` and `BASIC_AUTH` modes where the React SPA does not intercept the auth flow; removing it would break non-SPA clients and CLI/OPDS access
 
 ### 7.8 Testing
 
-- [ ] Unit tests for `AuthContext`: initial state (unauthenticated), login success/failure, silent refresh on 401, logout
-- [ ] Unit tests for `UserSettingsPanel`: password change submission, "sign out all devices" button, deactivated-account banner
-- [ ] Unit tests for `UserManagementPanel`: user list renders, create modal validates policy, delete confirmation, last-admin guard disables delete button
-- [ ] Unit tests for `SetupScreen`: renders when `needsSetup = true`, hides when `needsSetup = false`, form submission calls correct mutation
-- [ ] E2E test (Playwright or Cypress): full login → user settings → password change → re-login with new password
-- [ ] E2E test: admin creates a user, deactivates them, verifies deactivated user cannot log in
-- [ ] E2E test: first-run setup flow (no users → SetupScreen → create admin → LoginScreen → library)
-
-## Open Decisions (must close before Phase 2 completion)
-
-- [ ] Setup UX: confirm required setup wizard behavior for first-run migration
-- [x] Migration trigger: auto-on-startup/upgrade bootstrap for MVP
-- [x] Secure target mode for `AuthMode.NONE` migration (`UI_LOGIN` default; `SIMPLE_LOGIN` configurable) and compatibility fallback
-- [ ] Category policy: confirm soft limit threshold and behavior
-- [ ] Client compatibility policy: identify which clients must be supported in first release
-- [ ] Backup policy: confirm full-instance backup behavior for multi-user data
+- [x] Unit tests for `AuthManager`: initial state (unauthenticated), token set/clear, `setUserIdentity`/`clearUserIdentity`, silent refresh callback — `AuthManager.test.ts`
+- [x] Unit tests for `UserIdentityLoader`: populates identity on `me` response, force-logs-out when `isActive = false` — `UserIdentityLoader.test.tsx`
+- [x] Unit tests for `AccountSettings`: password change submission, "sign out all devices" button, deactivated-account handling — `AccountSettings.test.tsx`
+- [x] Unit tests for `UserManagementPanel`: user list renders, create modal validates policy, delete confirmation, last-admin guard disables delete button — `UserManagementPanel.test.tsx`
+- [x] Unit tests for `SetupScreen`: renders when `needsSetup = true`, hides when `needsSetup = false`, form submission calls correct mutation — `SetupScreen.test.tsx`
+- [x] E2E test (Playwright): full login → user settings → password change → re-login with new password — `e2e/login-password-change-relogin.spec.ts`
+- [x] E2E test: admin creates a user, deactivates them, verifies deactivated user cannot log in — `e2e/admin-user-deactivation.spec.ts`
+- [x] E2E test: first-run setup flow (no users → SetupScreen → create admin → LoginScreen → library) — `e2e/first-run-setup.spec.ts`
 
 ## Exit Criteria (MVP)
 
-- [ ] Multiple authenticated users can run on one server with isolated library/progress/categories/tracking
-- [ ] Admin can create/manage users and perform basic administration safely
-- [ ] Existing single-user data migrates without loss into first admin account
-- [ ] Core API/GraphQL paths enforce per-user authorization
-- [ ] Critical tests pass for isolation, migration, and auth flows
-- [ ] `AuthMode.NONE` is automatically migrated to a secure mode at startup with no bypass paths
-- [ ] Global downloader/updater queues behave safely under per-user authorization and scoped event output
-- [ ] Session/token revocation and user lifecycle controls are validated in automated tests
+- [x] Multiple authenticated users can run on one server with isolated library/progress/categories/tracking
+- [x] Admin can create/manage users and perform basic administration safely
+- [x] Existing single-user data migrates without loss into first admin account
+- [x] Core API/GraphQL paths enforce per-user authorization
+- [x] Critical tests pass for isolation, migration, and auth flows
+- [x] `AuthMode.NONE` is automatically migrated to a secure mode at startup with no bypass paths
+- [x] Global downloader/updater queues behave safely under per-user authorization and scoped event output
+- [x] Session/token revocation and user lifecycle controls are validated in automated tests

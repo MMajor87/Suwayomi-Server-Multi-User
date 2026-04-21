@@ -25,6 +25,14 @@ enum class WebUIFlavor(
     val latestReleaseInfoUrl: String,
     val baseFileName: String,
 ) {
+    BUNDLED(
+        "Bundled",
+        "",
+        "",
+        "",
+        "Suwayomi-WebUI",
+    ),
+
     WEBUI(
         "WebUI",
         "https://github.com/Suwayomi/Suwayomi-WebUI-preview",
@@ -51,7 +59,7 @@ enum class WebUIFlavor(
     ;
 
     companion object {
-        val default: WebUIFlavor = WEBUI
+        val default: WebUIFlavor = BUNDLED
 
         fun from(value: String): WebUIFlavor = entries.find { it.uiName == value } ?: default
 
