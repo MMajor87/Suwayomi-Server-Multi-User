@@ -32,12 +32,20 @@ jobs:
           ref: ${{ github.ref }}
           path: master
           fetch-depth: 0
+          submodules: recursive
 
       - name: Set up JDK
         uses: actions/setup-java@v5
         with:
           java-version: 25
           distribution: 'zulu'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: master/webUI/package-lock.json
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
@@ -49,11 +57,11 @@ jobs:
           cp .github/runner-files/ci-gradle.properties \
             ~/.gradle/gradle.properties
 
-      - name: Build and copy webUI, Build Jar
+      - name: Build WebUI and Jar
         env:
           ProductBuildType: "Stable"
         working-directory: master
-        run: ./gradlew :server:downloadWebUI :server:shadowJar --stacktrace
+        run: ./gradlew :server:bundleWebUI :server:shadowJar --stacktrace
 
       - name: Upload Jar
         uses: actions/upload-artifact@v6
