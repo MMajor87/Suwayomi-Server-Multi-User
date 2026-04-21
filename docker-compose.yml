@@ -1,0 +1,48 @@
+services:
+  suwayomi:
+    build: .
+    container_name: suwayomi-server
+    restart: unless-stopped
+    ports:
+      - "4567:4567"
+    volumes:
+      - suwayomi-data:/data
+    # Use JAVA_OPTS to pass additional JVM system properties without rebuilding
+    # the image.  All suwayomi settings follow the pattern:
+    #   -Dsuwayomi.tachidesk.config.server.<key>=<value>
+    environment:
+      JAVA_OPTS: ""
+    # ── PostgreSQL (optional) ──────────────────────────────────────────────
+    # Uncomment the block below (and the db service + suwayomi-db volume) to
+    # switch from the default embedded H2 database to PostgreSQL.
+    #
+    #   environment:
+    #     JAVA_OPTS: >-
+    #       -Dsuwayomi.tachidesk.config.server.databaseType=POSTGRESQL
+    #       -Dsuwayomi.tachidesk.config.server.databaseUrl=postgresql://db:5432/suwayomi
+    #       -Dsuwayomi.tachidesk.config.server.databaseUsername=suwayomi
+    #       -Dsuwayomi.tachidesk.config.server.databasePassword=changeme
+    #   depends_on:
+    #     db:
+    #       condition: service_healthy
+
+  # ── PostgreSQL service (keep commented out when using H2) ─────────────────
+  # db:
+  #   image: postgres:16-alpine
+  #   container_name: suwayomi-db
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB:       suwayomi
+  #     POSTGRES_USER:     suwayomi
+  #     POSTGRES_PASSWORD: changeme
+  #   volumes:
+  #     - suwayomi-db:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U suwayomi -d suwayomi"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+volumes:
+  suwayomi-data:
+  # suwayomi-db:
