@@ -15,8 +15,10 @@ import suwayomi.tachidesk.graphql.server.primitives.Edge
 import suwayomi.tachidesk.graphql.server.primitives.Node
 import suwayomi.tachidesk.graphql.server.primitives.NodeList
 import suwayomi.tachidesk.graphql.server.primitives.PageInfo
+import suwayomi.tachidesk.manga.impl.Chapter
 import suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass
 import suwayomi.tachidesk.manga.model.table.ChapterTable
+import suwayomi.tachidesk.manga.model.table.toDataClass
 import java.util.concurrent.CompletableFuture
 
 data class SyncConflictInfoType(
@@ -44,6 +46,16 @@ class ChapterType(
 //    val chapterCount: Int?,
 ) : Node {
     companion object {
+        fun fromRowForUser(
+            row: ResultRow,
+            userId: Int?,
+        ): ChapterType =
+            if (userId == null) {
+                ChapterType(row)
+            } else {
+                ChapterType(Chapter.withUserState(ChapterTable.toDataClass(row), userId))
+            }
+
         fun clearCacheFor(
             chapterId: Int,
             mangaId: Int,

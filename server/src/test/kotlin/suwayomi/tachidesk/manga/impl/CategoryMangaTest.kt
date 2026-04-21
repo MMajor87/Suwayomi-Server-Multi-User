@@ -11,6 +11,9 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.neq
+import org.jetbrains.exposed.sql.deleteWhere
+import org.jetbrains.exposed.sql.transactions.transaction
 import suwayomi.tachidesk.manga.impl.Category.DEFAULT_CATEGORY_ID
 import suwayomi.tachidesk.manga.model.table.CategoryMangaTable
 import suwayomi.tachidesk.manga.model.table.CategoryTable
@@ -72,7 +75,9 @@ class CategoryMangaTest : ApplicationTest() {
             ChapterTable,
             CategoryMangaTable,
             MangaTable,
-            CategoryTable,
         )
+        transaction {
+            CategoryTable.deleteWhere { CategoryTable.id neq DEFAULT_CATEGORY_ID }
+        }
     }
 }

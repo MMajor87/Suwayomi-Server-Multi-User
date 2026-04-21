@@ -9,8 +9,10 @@ package suwayomi.tachidesk.manga.model.table
 
 import org.jetbrains.exposed.dao.id.IntIdTable
 import org.jetbrains.exposed.sql.ReferenceOption
+import suwayomi.tachidesk.server.model.table.UserAccountTable
 
 object CategoryMangaTable : IntIdTable() {
     val category = reference("category", CategoryTable, ReferenceOption.CASCADE)
     val manga = reference("manga", MangaTable, ReferenceOption.CASCADE)
+    val userId = reference("user_id", UserAccountTable, onDelete = ReferenceOption.CASCADE).nullable()
 }

@@ -45,6 +45,7 @@ import suwayomi.tachidesk.manga.model.dataclass.MangaDataClass
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.toDataClass
+import suwayomi.tachidesk.manga.impl.Library
 import suwayomi.tachidesk.server.serverConfig
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -60,6 +61,7 @@ private val logger = KotlinLogging.logger {}
 object DownloadManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val clients = ConcurrentHashMap<String, WsContext>()
+    private val clientUsers = ConcurrentHashMap<String, Int>()
     private val downloadQueue = CopyOnWriteArrayList<DownloadQueueItem>()
     private val downloadUpdates = CopyOnWriteArraySet<DownloadUpdate>()
     private val downloaders = ConcurrentHashMap<Long, Downloader>()
@@ -104,24 +106,33 @@ object DownloadManager {
         }
     }
 
-    fun addClient(ctx: WsContext) {
+    fun addClient(
+        ctx: WsContext,
+        userId: Int,
+    ) {
         clients[ctx.sessionId()] = ctx
+        clientUsers[ctx.sessionId()] = userId
     }
 
     fun removeClient(ctx: WsContext) {
         clients.remove(ctx.sessionId())
+        clientUsers.remove(ctx.sessionId())
     }
 
-    fun notifyClient(ctx: WsContext) {
+    fun notifyClient(
+        ctx: WsContext,
+        userId: Int,
+    ) {
         ctx.send(
-            getStatus(),
+            Library.filterDownloadStatusForUser(userId, getStatus()),
         )
     }
 
     fun handleRequest(ctx: WsMessageContext) {
+        val userId = clientUsers[ctx.sessionId()] ?: return
         when (ctx.message()) {
             "STATUS" -> {
-                notifyClient(ctx)
+                notifyClient(ctx, userId)
             }
 
             else -> {
@@ -199,9 +210,10 @@ object DownloadManager {
             scope.launch {
                 statusFlow.emit(status)
                 if (clients.isNotEmpty()) {
-                    val status = getOldStatus(status)
-                    clients.forEach {
-                        it.value.send(status)
+                    clients.forEach { (sessionId, context) ->
+                        val userId = clientUsers[sessionId] ?: return@forEach
+                        val filteredStatus = Library.filterDownloadStatusForUser(userId, status)
+                        context.send(getOldStatus(filteredStatus))
                     }
                 }
             }

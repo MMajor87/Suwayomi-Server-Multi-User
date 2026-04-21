@@ -13,8 +13,11 @@ import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.local.LocalSource
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.jetbrains.exposed.sql.Database
+import org.jetbrains.exposed.sql.DatabaseConfig
+import org.jetbrains.exposed.sql.ExperimentalKeywordApi
 import org.junit.jupiter.api.BeforeAll
 import org.koin.core.context.startKoin
+import org.koin.core.error.KoinApplicationAlreadyStartedException
 import suwayomi.tachidesk.server.ApplicationDirs
 import suwayomi.tachidesk.server.JavalinSetup
 import suwayomi.tachidesk.server.ServerConfig
@@ -22,6 +25,7 @@ import suwayomi.tachidesk.server.androidCompat
 import suwayomi.tachidesk.server.database.databaseUp
 import suwayomi.tachidesk.server.serverConfig
 import suwayomi.tachidesk.server.serverModule
+import suwayomi.tachidesk.server.util.ConfigTypeRegistration
 import suwayomi.tachidesk.server.util.AppMutex.handleAppMutex
 import suwayomi.tachidesk.server.util.SystemTray
 import uy.kohesive.injekt.Injekt
@@ -55,6 +59,12 @@ open class ApplicationTest {
         private var initializedTheApp = false
 
         fun testingSetup() {
+            // register Tachidesk's config which is dubbed "ServerConfig"
+            ConfigTypeRegistration.registerCustomTypes()
+            GlobalConfigManager.registerModule(
+                ServerConfig.register { GlobalConfigManager.config },
+            )
+
             // Application dirs
             val applicationDirs = ApplicationDirs()
 
@@ -72,20 +82,19 @@ open class ApplicationTest {
                 File(it).mkdirs()
             }
 
-            // register Tachidesk's config which is dubbed "ServerConfig"
-            GlobalConfigManager.registerModule(
-                ServerConfig.register { GlobalConfigManager.config },
-            )
-
             // initialize Koin modules
             val app = App()
-            startKoin {
-                modules(
-                    createAppModule(app),
-                    androidCompatModule(),
-                    configManagerModule(),
-                    serverModule(applicationDirs),
-                )
+            try {
+                startKoin {
+                    modules(
+                        createAppModule(app),
+                        androidCompatModule(),
+                        configManagerModule(),
+                        serverModule(applicationDirs),
+                    )
+                }
+            } catch (_: KoinApplicationAlreadyStartedException) {
+                logger.debug { "Koin already started, reusing existing context for tests" }
             }
 
             // Make sure only one instance of the app is running
@@ -155,7 +164,17 @@ open class ApplicationTest {
             Locale.setDefault(Locale.ENGLISH)
 
             // in-memory database, don't discard database between connections/transactions
-            val db = Database.connect("jdbc:h2:mem:test;DB_CLOSE_DELAY=-1;", "org.h2.Driver")
+            val db =
+                Database.connect(
+                    "jdbc:h2:mem:test;DB_CLOSE_DELAY=-1;",
+                    "org.h2.Driver",
+                    databaseConfig =
+                        DatabaseConfig {
+                            useNestedTransactions = true
+                            @OptIn(ExperimentalKeywordApi::class)
+                            preserveKeywordCasing = false
+                        },
+                )
 
             databaseUp(db)
 

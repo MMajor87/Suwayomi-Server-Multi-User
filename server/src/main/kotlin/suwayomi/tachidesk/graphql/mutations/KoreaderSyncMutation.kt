@@ -1,19 +1,23 @@
 package suwayomi.tachidesk.graphql.mutations
 
 import graphql.execution.DataFetcherResult
+import graphql.schema.DataFetchingEnvironment
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.update
 import suwayomi.tachidesk.graphql.asDataFetcherResult
 import suwayomi.tachidesk.graphql.directives.RequireAuth
+import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.graphql.types.ChapterType
 import suwayomi.tachidesk.graphql.types.KoSyncConnectPayload
 import suwayomi.tachidesk.graphql.types.KoSyncStatusPayload
 import suwayomi.tachidesk.graphql.types.LogoutKoSyncAccountPayload
 import suwayomi.tachidesk.graphql.types.SyncConflictInfoType
+import suwayomi.tachidesk.manga.impl.Chapter
 import suwayomi.tachidesk.manga.impl.sync.KoreaderSyncService
 import suwayomi.tachidesk.manga.model.table.ChapterTable
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.JavalinSetup.future
+import suwayomi.tachidesk.server.user.requireUser
 import java.util.concurrent.CompletableFuture
 
 class KoreaderSyncMutation {
@@ -62,10 +66,14 @@ class KoreaderSyncMutation {
     )
 
     @RequireAuth
-    fun pushKoSyncProgress(input: PushKoSyncProgressInput): CompletableFuture<DataFetcherResult<PushKoSyncProgressPayload?>> =
+    fun pushKoSyncProgress(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: PushKoSyncProgressInput,
+    ): CompletableFuture<DataFetcherResult<PushKoSyncProgressPayload?>> =
         future {
             asDataFetcherResult {
-                KoreaderSyncService.pushProgress(input.chapterId)
+                val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
+                KoreaderSyncService.pushProgress(input.chapterId, userId)
 
                 val chapter =
                     transaction {
@@ -73,7 +81,7 @@ class KoreaderSyncMutation {
                             .selectAll()
                             .where { ChapterTable.id eq input.chapterId }
                             .firstOrNull()
-                            ?.let { ChapterType(it) }
+                            ?.let { ChapterType.fromRowForUser(it, userId) }
                     }
 
                 PushKoSyncProgressPayload(
@@ -96,10 +104,14 @@ class KoreaderSyncMutation {
     )
 
     @RequireAuth
-    fun pullKoSyncProgress(input: PullKoSyncProgressInput): CompletableFuture<DataFetcherResult<PullKoSyncProgressPayload?>> =
+    fun pullKoSyncProgress(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: PullKoSyncProgressInput,
+    ): CompletableFuture<DataFetcherResult<PullKoSyncProgressPayload?>> =
         future {
             asDataFetcherResult {
-                val syncResult = KoreaderSyncService.checkAndPullProgress(input.chapterId)
+                val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
+                val syncResult = KoreaderSyncService.checkAndPullProgress(input.chapterId, userId)
                 var syncConflictInfo: SyncConflictInfoType? = null
 
                 if (syncResult != null) {
@@ -112,12 +124,12 @@ class KoreaderSyncMutation {
                     }
 
                     if (syncResult.shouldUpdate) {
-                        transaction {
-                            ChapterTable.update({ ChapterTable.id eq input.chapterId }) {
-                                it[lastPageRead] = syncResult.pageRead
-                                it[lastReadAt] = syncResult.timestamp
-                            }
-                        }
+                        Chapter.setUserProgress(
+                            userId = userId,
+                            chapterId = input.chapterId,
+                            lastPageRead = syncResult.pageRead,
+                            lastReadAt = syncResult.timestamp,
+                        )
                     }
                 }
 
@@ -127,7 +139,7 @@ class KoreaderSyncMutation {
                             .selectAll()
                             .where { ChapterTable.id eq input.chapterId }
                             .firstOrNull()
-                            ?.let { ChapterType(it) }
+                            ?.let { ChapterType.fromRowForUser(it, userId) }
                     }
 
                 PullKoSyncProgressPayload(

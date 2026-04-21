@@ -112,11 +112,12 @@ object OpdsFeedBuilder {
      */
     fun getSearchFeed(
         criteria: OpdsSearchCriteria,
+        userId: Int,
         baseUrl: String,
         pageNum: Int,
         locale: Locale,
     ): String {
-        val (mangaEntries, total) = MangaRepository.findMangaByCriteria(criteria)
+        val (mangaEntries, total) = MangaRepository.findMangaByCriteria(criteria, userId)
         val builder =
             FeedBuilderInternal(
                 baseUrl,
@@ -143,6 +144,7 @@ object OpdsFeedBuilder {
      * @return An XML string representing the library feed.
      */
     fun getLibraryFeed(
+        userId: Int,
         criteria: OpdsMangaFilter,
         baseUrl: String,
         pageNum: Int,
@@ -151,7 +153,7 @@ object OpdsFeedBuilder {
         locale: Locale,
         isSearch: Boolean,
     ): String {
-        val result = MangaRepository.getLibraryManga(pageNum, sort, filter, criteria)
+        val result = MangaRepository.getLibraryManga(userId, pageNum, sort, filter, criteria)
 
         val feedTitle =
             when (criteria.primaryFilter) {

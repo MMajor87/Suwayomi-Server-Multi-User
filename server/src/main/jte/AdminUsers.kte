@@ -1,0 +1,671 @@
+@import suwayomi.tachidesk.server.generated.BuildConfig
+@import suwayomi.tachidesk.graphql.types.AuthMode
+
+@param authMode: AuthMode
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Suwayomi — User Management</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; }
+        body {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            background-color: rgb(12, 16, 33);
+            font-family: "Roboto","Helvetica","Arial",sans-serif;
+            font-weight: 400;
+            color: #fff;
+        }
+        header {
+            background-color: rgb(34, 38, 53);
+            box-shadow: rgba(0,0,0,0.2) 0 2px 4px -1px, rgba(0,0,0,0.14) 0 4px 5px 0;
+            padding: 0 32px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            min-height: 56px;
+        }
+        header h1 { margin: 0; font-size: 1.2rem; }
+        header .spacer { flex: 1; }
+        header .user-info { font-size: 0.8rem; opacity: 0.6; }
+        main { flex: 1; padding: 24px 32px; max-width: 1000px; width: 100%; margin: 0 auto; }
+        h2 { margin: 0 0 16px; font-size: 1.1rem; }
+        .alert {
+            border-radius: 6px;
+            padding: 10px 16px;
+            margin-bottom: 16px;
+            font-size: 0.9rem;
+            display: none;
+        }
+        .alert.error { background: #c62828; border: 1px solid #b71c1c; }
+        .alert.success { background: #1b5e20; border: 1px solid #2e7d32; }
+        .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .toolbar label { font-size: 0.85rem; opacity: 0.7; cursor: pointer; }
+        .toolbar input[type=checkbox] { cursor: pointer; width: 16px; height: 16px; }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th, td { padding: 10px 12px; text-align: left; }
+        th {
+            background: rgb(30, 36, 60);
+            font-weight: 500;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            opacity: 0.8;
+        }
+        tr { border-bottom: 1px solid rgba(255,255,255,0.07); }
+        tr:hover td { background: rgba(255,255,255,0.03); }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .badge.admin { background: rgba(91,116,239,0.25); color: rgb(140,160,255); }
+        .badge.user { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
+        .badge.active { background: rgba(46,125,50,0.3); color: #81c784; }
+        .badge.inactive { background: rgba(183,28,28,0.3); color: #e57373; }
+        .actions-cell { display: flex; gap: 6px; flex-wrap: wrap; }
+        .btn {
+            all: unset;
+            cursor: pointer;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            border: 1px solid transparent;
+            display: inline-block;
+        }
+        .btn-primary { background: rgb(91,116,239); color: #fff; padding: 6px 16px; }
+        .btn-primary:hover { background: rgb(70,95,210); }
+        .btn-danger { color: #e57373; border-color: rgba(229,115,115,0.4); }
+        .btn-danger:hover { background: rgba(229,115,115,0.1); }
+        .btn-warn { color: #ffb74d; border-color: rgba(255,183,77,0.4); }
+        .btn-warn:hover { background: rgba(255,183,77,0.1); }
+        .btn-neutral { color: rgba(255,255,255,0.7); border-color: rgba(255,255,255,0.2); }
+        .btn-neutral:hover { background: rgba(255,255,255,0.07); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal {
+            background: rgb(20, 24, 44);
+            border: 1px solid rgb(50, 60, 100);
+            border-radius: 8px;
+            padding: 24px 28px;
+            width: 100%;
+            max-width: 420px;
+            position: relative;
+        }
+        .modal h3 { margin: 0 0 20px; font-size: 1.05rem; }
+        .field { display: flex; flex-direction: column; margin-bottom: 14px; }
+        .field label { font-size: 0.82rem; opacity: 0.75; margin-bottom: 4px; }
+        .field input, .field select {
+            all: unset;
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.23);
+            padding: 7px 12px;
+            font-size: 0.95rem;
+            color: #fff;
+            background: transparent;
+            width: 100%;
+        }
+        .field input:hover, .field select:hover { border-color: white; }
+        .field input:focus, .field select:focus { border-color: rgb(91,116,239); }
+        .field select option { background: rgb(20,24,44); }
+        .hint { font-size: 0.72rem; opacity: 0.45; margin-top: 3px; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+        .modal-error { font-size: 0.85rem; color: #e57373; margin-bottom: 12px; display: none; }
+        .close-btn {
+            all: unset;
+            cursor: pointer;
+            position: absolute;
+            top: 12px;
+            right: 14px;
+            font-size: 1.1rem;
+            opacity: 0.5;
+        }
+        .close-btn:hover { opacity: 1; }
+        #login-screen {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgb(12,16,33);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+        #login-screen.visible { display: flex; }
+        .login-card {
+            background: rgb(6, 8, 16);
+            border: 1px solid rgb(40,48,80);
+            border-radius: 8px;
+            padding: 28px 32px;
+            width: 100%;
+            max-width: 380px;
+        }
+        .login-card h2 { margin: 0 0 8px; }
+        .login-card .sub { opacity: 0.55; font-size: 0.85rem; margin-bottom: 24px; }
+        footer { padding: 16px 32px; font-size: 0.7rem; opacity: 0.4; }
+    </style>
+</head>
+<body>
+
+<div id="login-screen">
+    <div class="login-card">
+        <h2>Admin Login</h2>
+        <p class="sub">Sign in with an admin account to manage users.</p>
+        <div id="login-error" class="alert error"></div>
+        <div class="field">
+            <label for="login-user">Username</label>
+            <input type="text" id="login-user" autocomplete="username" />
+        </div>
+        <div class="field">
+            <label for="login-pass">Password</label>
+            <input type="password" id="login-pass" autocomplete="current-password" />
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:16px">
+            <button class="btn btn-primary" id="login-submit-btn" onclick="doLogin()">Sign In</button>
+        </div>
+    </div>
+</div>
+
+<header>
+    <h1>Suwayomi</h1>
+    <div class="spacer"></div>
+    <span class="user-info" id="current-user-label"></span>
+    <button class="btn btn-neutral" onclick="doLogout()" style="font-size:0.75rem;padding:4px 8px;margin-left:8px">Sign Out</button>
+</header>
+
+<main>
+    <div id="global-error" class="alert error"></div>
+    <div id="global-success" class="alert success"></div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h2 style="margin:0">Users</h2>
+        <button class="btn btn-primary" onclick="openCreateModal()">+ New User</button>
+    </div>
+
+    <div class="toolbar">
+        <label>
+            <input type="checkbox" id="show-inactive" onchange="loadUsers()" />
+            Show inactive users
+        </label>
+    </div>
+
+    <div id="table-error" class="alert error"></div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Username</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="users-tbody">
+                <tr><td colspan="5" style="opacity:0.5;padding:20px 12px">Loading…</td></tr>
+            </tbody>
+        </table>
+    </div>
+</main>
+
+<footer>Suwayomi ${BuildConfig.VERSION} — Admin Panel</footer>
+
+<!-- Create User Modal -->
+<div class="modal-overlay" id="create-modal">
+    <div class="modal">
+        <button class="close-btn" onclick="closeModal('create-modal')">&#x2715;</button>
+        <h3>New User</h3>
+        <div id="create-error" class="modal-error"></div>
+        <div class="field">
+            <label for="c-username">Username</label>
+            <input type="text" id="c-username" autocomplete="off" />
+        </div>
+        <div class="field">
+            <label for="c-password">Password</label>
+            <input type="password" id="c-password" autocomplete="new-password" />
+            <span class="hint">Min 8 chars, uppercase + lowercase + digit or symbol.</span>
+        </div>
+        <div class="field">
+            <label for="c-role">Role</label>
+            <select id="c-role">
+                <option value="USER">User</option>
+                <option value="ADMIN">Admin</option>
+            </select>
+        </div>
+        <div class="field" style="flex-direction:row;align-items:center;gap:8px">
+            <input type="checkbox" id="c-active" checked style="width:16px;height:16px;margin:0;flex:0 0 auto" />
+            <label for="c-active" style="margin:0;font-size:0.85rem;opacity:0.8">Active</label>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-neutral" onclick="closeModal('create-modal')">Cancel</button>
+            <button class="btn btn-primary" id="create-submit-btn" onclick="doCreateUser()">Create</button>
+        </div>
+    </div>
+</div>
+
+<!-- Edit User Modal -->
+<div class="modal-overlay" id="edit-modal">
+    <div class="modal">
+        <button class="close-btn" onclick="closeModal('edit-modal')">&#x2715;</button>
+        <h3>Edit User</h3>
+        <div id="edit-error" class="modal-error"></div>
+        <input type="hidden" id="e-id" />
+        <div class="field">
+            <label for="e-username">Username</label>
+            <input type="text" id="e-username" autocomplete="off" />
+        </div>
+        <div class="field">
+            <label for="e-password">New Password <span style="opacity:0.5">(blank = keep unchanged)</span></label>
+            <input type="password" id="e-password" autocomplete="new-password" />
+        </div>
+        <div class="field">
+            <label for="e-role">Role</label>
+            <select id="e-role">
+                <option value="USER">User</option>
+                <option value="ADMIN">Admin</option>
+            </select>
+        </div>
+        <div class="field" style="flex-direction:row;align-items:center;gap:8px">
+            <input type="checkbox" id="e-active" style="width:16px;height:16px;margin:0;flex:0 0 auto" />
+            <label for="e-active" style="margin:0;font-size:0.85rem;opacity:0.8">Active</label>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-neutral" onclick="closeModal('edit-modal')">Cancel</button>
+            <button class="btn btn-primary" id="edit-submit-btn" onclick="doEditUser()">Save</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    var AUTH_MODE = '${authMode.name}';
+    var GQL_URL = '/api/graphql';
+    var accessToken = null;
+    var currentUserId = null;
+    var loadedUsers = [];
+
+    // ── Auth ──────────────────────────────────────────────────────────────────
+
+    function authHeaders() {
+        if (accessToken) return { Authorization: 'Bearer ' + accessToken };
+        return {};
+    }
+
+    async function graphql(query, variables) {
+        var body = { query: query };
+        if (variables) body.variables = variables;
+        var res = await fetch(GQL_URL, {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+            body: JSON.stringify(body),
+            credentials: 'include',
+        });
+        var json = await res.json();
+        if (json.errors && json.errors.length > 0) {
+            var msg = json.errors[0].message;
+            if (msg === 'Unauthorized' || res.status === 401) handleUnauthorized();
+            throw new Error(msg);
+        }
+        return json.data;
+    }
+
+    function handleUnauthorized() {
+        if (AUTH_MODE === 'UI_LOGIN') {
+            accessToken = null;
+            sessionStorage.removeItem('admin_token');
+            showLoginScreen();
+        } else {
+            window.location.href = '/login.html?redirect=' + encodeURIComponent(window.location.pathname);
+        }
+    }
+
+    function showLoginScreen() { document.getElementById('login-screen').classList.add('visible'); }
+    function hideLoginScreen() { document.getElementById('login-screen').classList.remove('visible'); }
+
+    async function doLogin() {
+        var username = document.getElementById('login-user').value.trim();
+        var password = document.getElementById('login-pass').value;
+        var errEl = document.getElementById('login-error');
+        errEl.style.display = 'none';
+        var btn = document.getElementById('login-submit-btn');
+        btn.disabled = true;
+
+        try {
+            var res = await fetch(GQL_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    query: 'mutation Login($input: LoginInput!) { login(input: $input) { accessToken } }',
+                    variables: { input: { username: username, password: password } },
+                }),
+                credentials: 'include',
+            });
+            var json = await res.json();
+            if (json.errors && json.errors.length > 0) throw new Error(json.errors[0].message);
+
+            accessToken = json.data.login.accessToken;
+            sessionStorage.setItem('admin_token', accessToken);
+
+            var meData = await graphql('{ me { id role } }');
+            if (meData.me.role !== 'ADMIN') {
+                accessToken = null;
+                sessionStorage.removeItem('admin_token');
+                throw new Error('This account does not have admin privileges.');
+            }
+            currentUserId = meData.me.id;
+            hideLoginScreen();
+            loadUsers();
+            loadCurrentUser();
+        } catch (e) {
+            errEl.textContent = e.message || 'Login failed.';
+            errEl.style.display = 'block';
+            btn.disabled = false;
+        }
+    }
+
+    document.getElementById('login-pass').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') doLogin();
+    });
+
+    // ── Alerts ────────────────────────────────────────────────────────────────
+
+    function showGlobalError(msg) {
+        var el = document.getElementById('global-error');
+        el.textContent = msg;
+        el.style.display = 'block';
+        document.getElementById('global-success').style.display = 'none';
+    }
+
+    function showGlobalSuccess(msg) {
+        var el = document.getElementById('global-success');
+        el.textContent = msg;
+        el.style.display = 'block';
+        document.getElementById('global-error').style.display = 'none';
+        setTimeout(function() { el.style.display = 'none'; }, 4000);
+    }
+
+    function clearAlerts() {
+        document.getElementById('global-error').style.display = 'none';
+        document.getElementById('global-success').style.display = 'none';
+    }
+
+    // ── Modals ────────────────────────────────────────────────────────────────
+
+    function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+    function openCreateModal() {
+        clearAlerts();
+        document.getElementById('c-username').value = '';
+        document.getElementById('c-password').value = '';
+        document.getElementById('c-role').value = 'USER';
+        document.getElementById('c-active').checked = true;
+        document.getElementById('create-error').style.display = 'none';
+        document.getElementById('create-submit-btn').disabled = false;
+        document.getElementById('create-modal').classList.add('open');
+    }
+
+    function openEditModal(userId) {
+        var u = loadedUsers.find(function(x) { return x.id === userId; });
+        if (!u) return;
+        clearAlerts();
+        document.getElementById('e-id').value = u.id;
+        document.getElementById('e-username').value = u.username;
+        document.getElementById('e-password').value = '';
+        document.getElementById('e-role').value = u.role;
+        document.getElementById('e-active').checked = u.isActive;
+        document.getElementById('edit-error').style.display = 'none';
+        document.getElementById('edit-submit-btn').disabled = false;
+        document.getElementById('edit-modal').classList.add('open');
+    }
+
+    // ── Table ─────────────────────────────────────────────────────────────────
+
+    function escHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function buildRow(u) {
+        var youLabel = u.id === currentUserId ? ' <span style="opacity:0.4;font-size:0.8rem">(you)</span>' : '';
+        var roleBadge = '<span class="badge ' + u.role.toLowerCase() + '">' + u.role + '</span>';
+        var statusBadge = u.isActive
+            ? '<span class="badge active">Active</span>'
+            : '<span class="badge inactive">Inactive</span>';
+        var toggleBtn = u.isActive
+            ? '<button class="btn btn-warn" onclick="doDeactivate(' + u.id + ')">Deactivate</button>'
+            : '<button class="btn btn-neutral" onclick="doReactivate(' + u.id + ')">Reactivate</button>';
+
+        return '<tr>'
+            + '<td>' + u.id + '</td>'
+            + '<td>' + escHtml(u.username) + youLabel + '</td>'
+            + '<td>' + roleBadge + '</td>'
+            + '<td>' + statusBadge + '</td>'
+            + '<td class="actions-cell">'
+            + '<button class="btn btn-neutral" onclick="openEditModal(' + u.id + ')">Edit</button>'
+            + toggleBtn
+            + '<button class="btn btn-warn" onclick="doForceSignOut(' + u.id + ')">Sign Out</button>'
+            + '<button class="btn btn-danger" onclick="doDelete(' + u.id + ')">Delete</button>'
+            + '</td></tr>';
+    }
+
+    async function loadUsers() {
+        var includeInactive = document.getElementById('show-inactive').checked;
+        var tbody = document.getElementById('users-tbody');
+        tbody.innerHTML = '<tr><td colspan="5" style="opacity:0.5;padding:20px 12px">Loading...</td></tr>';
+        document.getElementById('table-error').style.display = 'none';
+
+        try {
+            var data = await graphql(
+                'query Users($inc: Boolean!) { users(includeInactive: $inc) { id username role isActive tokenVersion } }',
+                { inc: includeInactive }
+            );
+            loadedUsers = data.users;
+
+            if (loadedUsers.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="opacity:0.5;padding:20px 12px">No users found.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = loadedUsers.map(buildRow).join('');
+        } catch (e) {
+            var el = document.getElementById('table-error');
+            el.textContent = 'Failed to load users: ' + e.message;
+            el.style.display = 'block';
+            tbody.innerHTML = '';
+        }
+    }
+
+    // ── Mutations ─────────────────────────────────────────────────────────────
+
+    async function doCreateUser() {
+        var username = document.getElementById('c-username').value.trim();
+        var password = document.getElementById('c-password').value;
+        var role = document.getElementById('c-role').value;
+        var isActive = document.getElementById('c-active').checked;
+        var errEl = document.getElementById('create-error');
+        errEl.style.display = 'none';
+
+        if (!username) { errEl.textContent = 'Username is required.'; errEl.style.display = 'block'; return; }
+        if (!password) { errEl.textContent = 'Password is required.'; errEl.style.display = 'block'; return; }
+
+        var btn = document.getElementById('create-submit-btn');
+        btn.disabled = true;
+        try {
+            await graphql(
+                'mutation C($i: CreateUserInput!) { createUser(input: $i) { user { id } } }',
+                { i: { username: username, password: password, role: role, isActive: isActive } }
+            );
+            closeModal('create-modal');
+            showGlobalSuccess('User "' + username + '" created.');
+            loadUsers();
+        } catch (e) {
+            errEl.textContent = e.message || 'Failed to create user.';
+            errEl.style.display = 'block';
+            btn.disabled = false;
+        }
+    }
+
+    async function doEditUser() {
+        var id = parseInt(document.getElementById('e-id').value);
+        var username = document.getElementById('e-username').value.trim();
+        var password = document.getElementById('e-password').value || null;
+        var role = document.getElementById('e-role').value;
+        var isActive = document.getElementById('e-active').checked;
+        var errEl = document.getElementById('edit-error');
+        errEl.style.display = 'none';
+
+        if (!username) { errEl.textContent = 'Username is required.'; errEl.style.display = 'block'; return; }
+
+        var btn = document.getElementById('edit-submit-btn');
+        btn.disabled = true;
+        try {
+            await graphql(
+                'mutation U($i: UpdateUserInput!) { updateUser(input: $i) { user { id } } }',
+                { i: { id: id, patch: { username: username, password: password, role: role, isActive: isActive } } }
+            );
+            closeModal('edit-modal');
+            showGlobalSuccess('User updated.');
+            loadUsers();
+        } catch (e) {
+            errEl.textContent = e.message || 'Failed to update user.';
+            errEl.style.display = 'block';
+            btn.disabled = false;
+        }
+    }
+
+    async function doDeactivate(id) {
+        var u = loadedUsers.find(function(x) { return x.id === id; });
+        var name = u ? u.username : String(id);
+        if (!confirm('Deactivate user "' + name + '"? They will no longer be able to log in.')) return;
+        clearAlerts();
+        try {
+            await graphql(
+                'mutation D($i: DeactivateUserInput!) { deactivateUser(input: $i) { user { id } } }',
+                { i: { id: id } }
+            );
+            showGlobalSuccess('"' + name + '" deactivated.');
+            loadUsers();
+        } catch (e) { showGlobalError('Deactivate failed: ' + e.message); }
+    }
+
+    async function doReactivate(id) {
+        var u = loadedUsers.find(function(x) { return x.id === id; });
+        var name = u ? u.username : String(id);
+        clearAlerts();
+        try {
+            await graphql(
+                'mutation R($i: ReactivateUserInput!) { reactivateUser(input: $i) { user { id } } }',
+                { i: { id: id } }
+            );
+            showGlobalSuccess('"' + name + '" reactivated.');
+            loadUsers();
+        } catch (e) { showGlobalError('Reactivate failed: ' + e.message); }
+    }
+
+    async function doForceSignOut(id) {
+        var u = loadedUsers.find(function(x) { return x.id === id; });
+        var name = u ? u.username : String(id);
+        if (!confirm('Force sign out "' + name + '"? All active sessions will be revoked.')) return;
+        clearAlerts();
+        try {
+            await graphql(
+                'mutation F($i: ForceSignOutUserInput!) { forceSignOutUser(input: $i) { success } }',
+                { i: { id: id } }
+            );
+            showGlobalSuccess('"' + name + '" signed out.');
+        } catch (e) { showGlobalError('Force sign out failed: ' + e.message); }
+    }
+
+    async function doDelete(id) {
+        var u = loadedUsers.find(function(x) { return x.id === id; });
+        var name = u ? u.username : String(id);
+        if (!confirm('Permanently delete "' + name + '"?\n\nThis removes all library, progress, and category data. Cannot be undone.')) return;
+        clearAlerts();
+        try {
+            await graphql(
+                'mutation Del($i: DeleteUserInput!) { deleteUser(input: $i) { success } }',
+                { i: { id: id } }
+            );
+            showGlobalSuccess('"' + name + '" deleted.');
+            loadUsers();
+        } catch (e) { showGlobalError('Delete failed: ' + e.message); }
+    }
+
+    async function doLogout() {
+        try {
+            await graphql('mutation L($i: LogoutInput!) { logout(input: $i) { success } }', { i: {} });
+        } catch (_) {}
+        accessToken = null;
+        sessionStorage.removeItem('admin_token');
+        window.location.href = '/login.html';
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+
+    async function loadCurrentUser() {
+        try {
+            var meData = await graphql('{ me { id username } }');
+            currentUserId = meData.me.id;
+            document.getElementById('current-user-label').textContent = meData.me.username;
+        } catch (_) {}
+    }
+
+    async function startup() {
+        if (AUTH_MODE === 'UI_LOGIN') {
+            var stored = sessionStorage.getItem('admin_token');
+            if (stored) {
+                accessToken = stored;
+                try {
+                    var meData = await graphql('{ me { id username role } }');
+                    if (meData.me.role !== 'ADMIN') {
+                        accessToken = null;
+                        sessionStorage.removeItem('admin_token');
+                        showLoginScreen();
+                        return;
+                    }
+                    currentUserId = meData.me.id;
+                    document.getElementById('current-user-label').textContent = meData.me.username;
+                    loadUsers();
+                    return;
+                } catch (_) {
+                    accessToken = null;
+                    sessionStorage.removeItem('admin_token');
+                }
+            }
+            showLoginScreen();
+        } else {
+            await loadCurrentUser();
+            loadUsers();
+        }
+    }
+
+    document.querySelectorAll('.modal-overlay').forEach(function(el) {
+        el.addEventListener('click', function(e) {
+            if (e.target === el) el.classList.remove('open');
+        });
+    });
+
+    startup();
+</script>
+</body>
+</html>

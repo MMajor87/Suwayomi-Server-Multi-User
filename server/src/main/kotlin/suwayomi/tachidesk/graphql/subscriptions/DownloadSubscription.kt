@@ -9,20 +9,28 @@ package suwayomi.tachidesk.graphql.subscriptions
 
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
 import com.expediagroup.graphql.generator.annotations.GraphQLDescription
+import graphql.schema.DataFetchingEnvironment
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import suwayomi.tachidesk.graphql.directives.RequireAuth
+import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.graphql.types.DownloadStatus
 import suwayomi.tachidesk.graphql.types.DownloadUpdates
+import suwayomi.tachidesk.manga.impl.Library
 import suwayomi.tachidesk.manga.impl.download.DownloadManager
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
+import suwayomi.tachidesk.server.user.requireUser
 
 class DownloadSubscription {
     @GraphQLDeprecated("Replaced with downloadStatusChanged", ReplaceWith("downloadStatusChanged(input)"))
     @RequireAuth
-    fun downloadChanged(): Flow<DownloadStatus> =
-        DownloadManager.status.map { downloadStatus ->
-            DownloadStatus(downloadStatus)
+    fun downloadChanged(dataFetchingEnvironment: DataFetchingEnvironment): Flow<DownloadStatus> {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
+
+        return DownloadManager.status.map { downloadStatus ->
+            DownloadStatus(Library.filterDownloadStatusForUser(userId, downloadStatus))
         }
+    }
 
     data class DownloadChangedInput(
         @GraphQLDescription(
@@ -36,12 +44,17 @@ class DownloadSubscription {
     )
 
     @RequireAuth
-    fun downloadStatusChanged(input: DownloadChangedInput): Flow<DownloadUpdates> {
+    fun downloadStatusChanged(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: DownloadChangedInput,
+    ): Flow<DownloadUpdates> {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
         val omitUpdates = input.maxUpdates != null
         val maxUpdates = input.maxUpdates ?: 50
 
         return DownloadManager.updates.map { downloadUpdates ->
-            val omittedUpdates = omitUpdates && downloadUpdates.updates.size > maxUpdates
+            val scopedUpdates = Library.filterDownloadUpdatesForUser(userId, downloadUpdates)
+            val omittedUpdates = omitUpdates && scopedUpdates.updates.size > maxUpdates
 
             // the graphql subscription execution strategy does not support data loader batching which causes the n+1 problem,
             // thus, too many updates (e.g. on mass enqueue or dequeue) causes unresponsiveness of the server until the
@@ -49,12 +62,12 @@ class DownloadSubscription {
             val actualDownloadUpdates =
                 if (omittedUpdates) {
                     suwayomi.tachidesk.manga.impl.download.model.DownloadUpdates(
-                        downloadUpdates.status,
-                        downloadUpdates.updates.subList(0, maxUpdates),
-                        downloadUpdates.initial,
+                        scopedUpdates.status,
+                        scopedUpdates.updates.subList(0, maxUpdates),
+                        scopedUpdates.initial,
                     )
                 } else {
-                    downloadUpdates
+                    scopedUpdates
                 }
 
             DownloadUpdates(actualDownloadUpdates, omittedUpdates)

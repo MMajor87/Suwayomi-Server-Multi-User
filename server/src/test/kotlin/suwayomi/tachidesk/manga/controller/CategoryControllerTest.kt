@@ -10,10 +10,12 @@ package suwayomi.tachidesk.manga.controller
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.neq
+import org.jetbrains.exposed.sql.deleteWhere
+import org.jetbrains.exposed.sql.transactions.transaction
 import suwayomi.tachidesk.manga.impl.Category
 import suwayomi.tachidesk.manga.model.table.CategoryTable
 import suwayomi.tachidesk.test.ApplicationTest
-import suwayomi.tachidesk.test.clearTables
 
 class CategoryControllerTest : ApplicationTest() {
     @Test
@@ -35,8 +37,8 @@ class CategoryControllerTest : ApplicationTest() {
 
     @AfterEach
     internal fun tearDown() {
-        clearTables(
-            CategoryTable,
-        )
+        transaction {
+            CategoryTable.deleteWhere { CategoryTable.id neq Category.DEFAULT_CATEGORY_ID }
+        }
     }
 }

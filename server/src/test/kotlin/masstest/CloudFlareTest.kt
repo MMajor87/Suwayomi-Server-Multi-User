@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
@@ -19,7 +20,7 @@ import java.io.File
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CloudFlareTest {
-    lateinit var nhentai: HttpSource
+    private var nhentai: HttpSource? = null
 
     @BeforeAll
     fun setup() {
@@ -30,7 +31,17 @@ class CloudFlareTest {
 
         runBlocking {
             val extensions = ExtensionsList.getExtensionList()
-            with(extensions.first { it.name == "NHentai" }) {
+            val nhentaiExtension =
+                extensions.firstOrNull {
+                    it.name.equals("NHentai", ignoreCase = true) || it.pkgName.contains("nhentai", ignoreCase = true)
+                }
+
+            if (nhentaiExtension == null) {
+                logger.warn { "Skipping CloudFlareTest setup: NHentai extension is unavailable" }
+                return@runBlocking
+            }
+
+            with(nhentaiExtension) {
                 if (!installed) {
                     Extension.installExtension(pkgName)
                 } else if (hasUpdate) {
@@ -42,8 +53,10 @@ class CloudFlareTest {
             nhentai =
                 Source
                     .getSourceList()
-                    .firstNotNullOf { it.id.toLong().takeIf { it == 3122156392225024195L } }
-                    .let(GetCatalogueSource::getCatalogueSourceOrNull) as HttpSource
+                    .firstOrNull { it.id.toLong() == 3122156392225024195L }
+                    ?.id
+                    ?.toLong()
+                    ?.let(GetCatalogueSource::getCatalogueSourceOrNull) as? HttpSource
         }
         setLoggingEnabled(true)
     }
@@ -53,7 +66,11 @@ class CloudFlareTest {
     @Test
     fun `test nhentai browse`() =
         runTest {
-            assert(nhentai.getPopularManga(1).mangas.isNotEmpty()) {
+            val source = nhentai
+            assumeTrue(source != null, "NHentai source unavailable in this environment")
+            val availableSource = source!!
+
+            assert(availableSource.getPopularManga(1).mangas.isNotEmpty()) {
                 "NHentai results were empty"
             }
         }

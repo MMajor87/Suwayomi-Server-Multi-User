@@ -8,8 +8,10 @@ import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.greater
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
+import org.jetbrains.exposed.sql.andWhere
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
+import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.graphql.directives.RequireAuth
 import suwayomi.tachidesk.graphql.queries.filter.BooleanFilter
 import suwayomi.tachidesk.graphql.queries.filter.DoubleFilter
@@ -41,6 +43,8 @@ import suwayomi.tachidesk.manga.impl.track.tracker.TrackerManager
 import suwayomi.tachidesk.manga.model.table.TrackRecordTable
 import suwayomi.tachidesk.manga.model.table.insertAll
 import suwayomi.tachidesk.server.JavalinSetup.future
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
+import suwayomi.tachidesk.server.user.requireUser
 import java.util.concurrent.CompletableFuture
 
 class TrackQuery {
@@ -130,6 +134,7 @@ class TrackQuery {
 
     @RequireAuth
     fun trackers(
+        dataFetchingEnvironment: DataFetchingEnvironment,
         condition: TrackerCondition? = null,
         @GraphQLDeprecated(
             "Replaced with order",
@@ -148,9 +153,10 @@ class TrackQuery {
         last: Int? = null,
         offset: Int? = null,
     ): TrackerNodeList {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
         val (queryResults, resultsAsType) =
             run {
-                var res = TrackerManager.services.map { TrackerType(it) }
+                var res = TrackerManager.services(userId).map { TrackerType(it) }
 
                 if (condition != null) {
                     res =
@@ -409,6 +415,7 @@ class TrackQuery {
 
     @RequireAuth
     fun trackRecords(
+        dataFetchingEnvironment: DataFetchingEnvironment,
         condition: TrackRecordCondition? = null,
         filter: TrackRecordFilter? = null,
         @GraphQLDeprecated(
@@ -428,9 +435,11 @@ class TrackQuery {
         last: Int? = null,
         offset: Int? = null,
     ): TrackRecordNodeList {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
         val queryResults =
             transaction {
                 val res = TrackRecordTable.selectAll()
+                res.andWhere { TrackRecordTable.userId eq userId }
 
                 res.applyOps(condition, filter)
 
@@ -511,10 +520,14 @@ class TrackQuery {
     )
 
     @RequireAuth
-    fun searchTracker(input: SearchTrackerInput): CompletableFuture<SearchTrackerPayload> =
-        future {
+    fun searchTracker(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: SearchTrackerInput,
+    ): CompletableFuture<SearchTrackerPayload> {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
+        return future {
             val tracker =
-                requireNotNull(TrackerManager.getTracker(input.trackerId)) {
+                requireNotNull(TrackerManager.getTracker(input.trackerId, userId)) {
                     "Tracker not found"
                 }
             require(tracker.isLoggedIn) {
@@ -526,4 +539,5 @@ class TrackQuery {
                 },
             )
         }
+    }
 }

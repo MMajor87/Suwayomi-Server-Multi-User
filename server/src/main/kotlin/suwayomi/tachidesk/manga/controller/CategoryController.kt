@@ -31,8 +31,8 @@ object CategoryController {
                 }
             },
             behaviorOf = { ctx ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
-                ctx.json(Category.getCategoryList())
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                ctx.json(Category.getCategoryList(userId))
             },
             withResults = {
                 json<Array<CategoryDataClass>>(HttpStatus.OK)
@@ -50,8 +50,8 @@ object CategoryController {
                 }
             },
             behaviorOf = { ctx, name ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
-                if (Category.createCategory(name) != -1) {
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                if (Category.createCategory(name, userId) != -1) {
                     ctx.status(200)
                 } else {
                     ctx.status(HttpStatus.BAD_REQUEST)
@@ -78,8 +78,8 @@ object CategoryController {
                 }
             },
             behaviorOf = { ctx, categoryId, name, isDefault, includeInUpdate, includeInDownload ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
-                Category.updateCategory(categoryId, name, isDefault, includeInUpdate, includeInDownload)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                Category.updateCategory(categoryId, name, isDefault, includeInUpdate, includeInDownload, userId)
                 ctx.status(200)
             },
             withResults = {
@@ -98,8 +98,8 @@ object CategoryController {
                 }
             },
             behaviorOf = { ctx, categoryId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
-                Category.removeCategory(categoryId)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                Category.removeCategory(categoryId, userId)
                 ctx.status(200)
             },
             withResults = {
@@ -118,8 +118,8 @@ object CategoryController {
                 }
             },
             behaviorOf = { ctx, categoryId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
-                ctx.json(CategoryManga.getCategoryMangaList(categoryId))
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                ctx.json(CategoryManga.getCategoryMangaList(categoryId, userId))
             },
             withResults = {
                 json<Array<MangaDataClass>>(HttpStatus.OK)
@@ -138,8 +138,8 @@ object CategoryController {
                 }
             },
             behaviorOf = { ctx, from, to ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
-                Category.reorderCategory(from, to)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                Category.reorderCategory(from, to, userId)
                 ctx.status(200)
             },
             withResults = {
@@ -160,8 +160,8 @@ object CategoryController {
                 }
             },
             behaviorOf = { ctx, categoryId, key, value ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
-                Category.modifyMeta(categoryId, key, value)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                Category.modifyMeta(categoryId, key, value, userId)
                 ctx.status(200)
             },
             withResults = {

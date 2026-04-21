@@ -32,6 +32,7 @@ object OpdsV1Controller {
      */
     private fun getLibraryFeed(
         ctx: Context,
+        userId: Int,
         pageNum: Int?,
         criteria: OpdsMangaFilter,
         isSearch: Boolean,
@@ -40,6 +41,7 @@ object OpdsV1Controller {
         ctx.future {
             future {
                 OpdsFeedBuilder.getLibraryFeed(
+                    userId = userId,
                     criteria = criteria,
                     baseUrl = BASE_URL,
                     pageNum = pageNum ?: 1,
@@ -144,7 +146,7 @@ object OpdsV1Controller {
         handler(
             documentWith = { withOperation { summary("OPDS Series in Library Feed") } },
             behaviorOf = { ctx ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val pageNumber = ctx.queryParam("pageNumber")?.toIntOrNull()
                 val query = ctx.queryParam("query")
                 val author = ctx.queryParam("author")
@@ -157,7 +159,13 @@ object OpdsV1Controller {
                     val opdsSearchCriteria = OpdsSearchCriteria(query, author, title)
                     ctx.future {
                         future {
-                            OpdsFeedBuilder.getSearchFeed(opdsSearchCriteria, BASE_URL, pageNumber ?: 1, locale)
+                            OpdsFeedBuilder.getSearchFeed(
+                                criteria = opdsSearchCriteria,
+                                userId = userId,
+                                baseUrl = BASE_URL,
+                                pageNum = pageNumber ?: 1,
+                                locale = locale,
+                            )
                         }.thenApply { xml ->
                             ctx.contentType(OPDS_MIME).result(xml)
                         }
@@ -176,6 +184,7 @@ object OpdsV1Controller {
                         )
                     getLibraryFeed(
                         ctx,
+                        userId,
                         pageNumber,
                         criteria,
                         isSearch = false,
@@ -424,9 +433,9 @@ object OpdsV1Controller {
             pathParam<Long>("sourceId"),
             documentWith = { withOperation { summary("OPDS Library Source Specific Series Feed") } },
             behaviorOf = { ctx, sourceId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val criteria = buildCriteriaFromContext(ctx, OpdsMangaFilter(sourceId = sourceId, primaryFilter = PrimaryFilterType.SOURCE))
-                getLibraryFeed(ctx, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
+                getLibraryFeed(ctx, userId, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
             },
             withResults = {
                 httpCode(HttpStatus.OK)
@@ -442,10 +451,10 @@ object OpdsV1Controller {
             pathParam<Int>("categoryId"),
             documentWith = { withOperation { summary("OPDS Category Specific Series Feed") } },
             behaviorOf = { ctx, categoryId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val criteria =
                     buildCriteriaFromContext(ctx, OpdsMangaFilter(categoryId = categoryId, primaryFilter = PrimaryFilterType.CATEGORY))
-                getLibraryFeed(ctx, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
+                getLibraryFeed(ctx, userId, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
             },
             withResults = {
                 httpCode(HttpStatus.OK)
@@ -461,9 +470,9 @@ object OpdsV1Controller {
             pathParam<String>("genre"),
             documentWith = { withOperation { summary("OPDS Genre Specific Series Feed") } },
             behaviorOf = { ctx, genre ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val criteria = buildCriteriaFromContext(ctx, OpdsMangaFilter(genre = genre, primaryFilter = PrimaryFilterType.GENRE))
-                getLibraryFeed(ctx, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
+                getLibraryFeed(ctx, userId, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
             },
             withResults = {
                 httpCode(HttpStatus.OK)
@@ -479,9 +488,9 @@ object OpdsV1Controller {
             pathParam<Int>("statusId"),
             documentWith = { withOperation { summary("OPDS Status Specific Series Feed") } },
             behaviorOf = { ctx, statusId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val criteria = buildCriteriaFromContext(ctx, OpdsMangaFilter(statusId = statusId, primaryFilter = PrimaryFilterType.STATUS))
-                getLibraryFeed(ctx, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
+                getLibraryFeed(ctx, userId, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
             },
             withResults = {
                 httpCode(HttpStatus.OK)
@@ -502,10 +511,10 @@ object OpdsV1Controller {
                 }
             },
             behaviorOf = { ctx, langCode ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUserWithBasicFallback(ctx)
                 val criteria =
                     buildCriteriaFromContext(ctx, OpdsMangaFilter(langCode = langCode, primaryFilter = PrimaryFilterType.LANGUAGE))
-                getLibraryFeed(ctx, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
+                getLibraryFeed(ctx, userId, ctx.queryParam("pageNumber")?.toIntOrNull(), criteria, isSearch = false)
             },
             withResults = {
                 httpCode(HttpStatus.OK)

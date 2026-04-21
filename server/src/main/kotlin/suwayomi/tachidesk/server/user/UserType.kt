@@ -29,8 +29,8 @@ fun UserType.requireUserWithBasicFallback(ctx: Context): Int =
             id
         }
 
-        UserType.Visitor if ctx.getAttribute(Attribute.TachideskBasic) -> {
-            1
+        UserType.Visitor if ctx.getAttribute(Attribute.TachideskBasicUserId) > 0 -> {
+            ctx.getAttribute(Attribute.TachideskBasicUserId)
         }
 
         UserType.Visitor -> {
@@ -41,7 +41,7 @@ fun UserType.requireUserWithBasicFallback(ctx: Context): Int =
 
 fun getUserFromToken(token: String?): UserType {
     if (serverConfig.authMode.value != AuthMode.UI_LOGIN) {
-        return UserType.Admin(1)
+        return findDefaultActiveUser()?.let { UserType.Admin(it.id) } ?: UserType.Visitor
     }
 
     if (token.isNullOrBlank()) {
@@ -51,20 +51,31 @@ fun getUserFromToken(token: String?): UserType {
     return Jwt.verifyJwt(token)
 }
 
-fun getUserFromContext(ctx: Context): UserType {
-    fun cookieValid(): Boolean {
-        val username = ctx.sessionAttribute<String>("logged-in") ?: return false
-        return username == serverConfig.authUsername.value
+fun getUserFromContext(
+    ctx: Context,
+    basicAuthUserId: Int = 0,
+): UserType {
+    fun cookieUser(): AuthenticatedUser? {
+        val username = ctx.sessionAttribute<String>("logged-in") ?: return null
+        return findActiveUserByUsername(username)
     }
 
     return when (serverConfig.authMode.value) {
+        AuthMode.NONE -> {
+            findDefaultActiveUser()?.let { UserType.Admin(it.id) } ?: UserType.Visitor
+        }
+
         // NOTE: Basic Auth is expected to have been validated by JavalinSetup
-        AuthMode.NONE, AuthMode.BASIC_AUTH -> {
-            UserType.Admin(1)
+        AuthMode.BASIC_AUTH -> {
+            if (basicAuthUserId > 0) {
+                UserType.Admin(basicAuthUserId)
+            } else {
+                UserType.Visitor
+            }
         }
 
         AuthMode.SIMPLE_LOGIN -> {
-            if (cookieValid()) UserType.Admin(1) else UserType.Visitor
+            cookieUser()?.let { UserType.Admin(it.id) } ?: UserType.Visitor
         }
 
         AuthMode.UI_LOGIN -> {
@@ -77,19 +88,19 @@ fun getUserFromContext(ctx: Context): UserType {
 }
 
 fun getUserFromWsContext(ctx: WsConnectContext): UserType {
-    fun cookieValid(): Boolean {
-        val username = ctx.sessionAttribute<String>("logged-in") ?: return false
-        return username == serverConfig.authUsername.value
+    fun cookieUser(): AuthenticatedUser? {
+        val username = ctx.sessionAttribute<String>("logged-in") ?: return null
+        return findActiveUserByUsername(username)
     }
 
     return when (serverConfig.authMode.value) {
         // NOTE: Basic Auth is expected to have been validated by JavalinSetup
         AuthMode.NONE, AuthMode.BASIC_AUTH -> {
-            UserType.Admin(1)
+            findDefaultActiveUser()?.let { UserType.Admin(it.id) } ?: UserType.Visitor
         }
 
         AuthMode.SIMPLE_LOGIN -> {
-            if (cookieValid()) UserType.Admin(1) else UserType.Visitor
+            cookieUser()?.let { UserType.Admin(it.id) } ?: UserType.Visitor
         }
 
         AuthMode.UI_LOGIN -> {

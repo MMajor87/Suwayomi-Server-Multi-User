@@ -10,11 +10,13 @@ package suwayomi.tachidesk.manga.controller
 import io.javalin.http.HttpStatus
 import io.javalin.websocket.WsConfig
 import kotlinx.serialization.json.Json
+import suwayomi.tachidesk.manga.impl.Library
 import suwayomi.tachidesk.manga.impl.download.DownloadManager
 import suwayomi.tachidesk.manga.impl.download.DownloadManager.EnqueueInput
 import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.JavalinSetup.future
 import suwayomi.tachidesk.server.JavalinSetup.getAttribute
+import suwayomi.tachidesk.server.user.ForbiddenException
 import suwayomi.tachidesk.server.user.requireUser
 import suwayomi.tachidesk.server.util.handler
 import suwayomi.tachidesk.server.util.pathParam
@@ -27,9 +29,9 @@ object DownloadController {
     /** Download queue stats */
     fun downloadsWS(ws: WsConfig) {
         ws.onConnect { ctx ->
-            ctx.getAttribute(Attribute.TachideskUser).requireUser()
-            DownloadManager.addClient(ctx)
-            DownloadManager.notifyClient(ctx)
+            val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+            DownloadManager.addClient(ctx, userId)
+            DownloadManager.notifyClient(ctx, userId)
         }
         ws.onMessage { ctx ->
             DownloadManager.handleRequest(ctx)
@@ -49,7 +51,10 @@ object DownloadController {
                 }
             },
             behaviorOf = { ctx ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                if (!Library.isAdmin(userId)) {
+                    throw ForbiddenException()
+                }
                 DownloadManager.start()
             },
             withResults = {
@@ -67,7 +72,10 @@ object DownloadController {
                 }
             },
             behaviorOf = { ctx ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                if (!Library.isAdmin(userId)) {
+                    throw ForbiddenException()
+                }
                 ctx.future {
                     future { DownloadManager.stop() }
                         .thenApply { ctx.status(HttpStatus.OK) }
@@ -88,9 +96,19 @@ object DownloadController {
                 }
             },
             behaviorOf = { ctx ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 ctx.future {
-                    future { DownloadManager.clear() }
+                    future {
+                        if (Library.isAdmin(userId)) {
+                            DownloadManager.clear()
+                        } else {
+                            val ownChapters =
+                                Library
+                                    .filterDownloadQueueByUser(userId, DownloadManager.getStatus().queue)
+                                    .map { it.chapterId }
+                            DownloadManager.dequeue(EnqueueInput(ownChapters))
+                        }
+                    }
                         .thenApply { ctx.status(HttpStatus.OK) }
                 }
             },
@@ -111,7 +129,8 @@ object DownloadController {
                 }
             },
             behaviorOf = { ctx, chapterIndex, mangaId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                Library.requireMangaAccess(userId, mangaId)
                 ctx.future {
                     future {
                         DownloadManager.enqueueWithChapterIndex(mangaId, chapterIndex)
@@ -134,11 +153,16 @@ object DownloadController {
                 body<EnqueueInput>()
             },
             behaviorOf = { ctx ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 val inputs = json.decodeFromString<EnqueueInput>(ctx.body())
+                val requestedChapterIds = inputs.chapterIds.orEmpty()
+                val allowedChapterIds = Library.getAccessibleChapterIds(userId, requestedChapterIds)
+                if (allowedChapterIds.size != requestedChapterIds.toSet().size) {
+                    throw ForbiddenException()
+                }
                 ctx.future {
                     future {
-                        DownloadManager.enqueue(inputs)
+                        DownloadManager.enqueue(EnqueueInput(allowedChapterIds.toList()))
                     }.thenApply { ctx.status(HttpStatus.OK) }
                 }
             },
@@ -158,11 +182,16 @@ object DownloadController {
                 body<EnqueueInput>()
             },
             behaviorOf = { ctx ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 val input = json.decodeFromString<EnqueueInput>(ctx.body())
+                val requestedChapterIds = input.chapterIds.orEmpty()
+                val allowedChapterIds = Library.getAccessibleChapterIds(userId, requestedChapterIds)
+                if (allowedChapterIds.size != requestedChapterIds.toSet().size) {
+                    throw ForbiddenException()
+                }
                 ctx.future {
                     future {
-                        DownloadManager.dequeue(input)
+                        DownloadManager.dequeue(EnqueueInput(allowedChapterIds.toList()))
                     }.thenApply { ctx.status(HttpStatus.OK) }
                 }
             },
@@ -183,7 +212,8 @@ object DownloadController {
                 }
             },
             behaviorOf = { ctx, chapterIndex, mangaId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                Library.requireMangaAccess(userId, mangaId)
                 DownloadManager.dequeue(chapterIndex, mangaId)
 
                 ctx.status(200)
@@ -206,7 +236,10 @@ object DownloadController {
                 }
             },
             behaviorOf = { ctx, chapterIndex, mangaId, to ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                if (!Library.isAdmin(userId)) {
+                    throw ForbiddenException()
+                }
                 DownloadManager.reorder(chapterIndex, mangaId, to)
             },
             withResults = {

@@ -1,0 +1,203 @@
+@import suwayomi.tachidesk.server.generated.BuildConfig
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Suwayomi — First-Run Setup</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; height: 100%; }
+        body {
+            display: flex;
+            flex-direction: column;
+            background-color: rgb(12, 16, 33);
+            font-family: "Roboto","Helvetica","Arial",sans-serif;
+            font-weight: 400;
+            color: #fff;
+        }
+        header {
+            background-color: rgb(34, 38, 53);
+            box-shadow: rgba(0,0,0,0.2) 0 2px 4px -1px, rgba(0,0,0,0.14) 0 4px 5px 0, rgba(0,0,0,0.12) 0 1px 10px 0;
+            color: #fff;
+            padding: 8px 32px;
+        }
+        header h1, header p { margin: 0; }
+        header p { font-size: 0.85rem; opacity: 0.7; margin-top: 2px; }
+        main { flex: 1; display: flex; flex-direction: column; align-items: center; padding-top: 32px; }
+        .card {
+            background: rgb(6, 8, 16);
+            border: 1px solid rgb(40, 48, 80);
+            border-radius: 8px;
+            padding: 24px 32px;
+            width: 100%;
+            max-width: 460px;
+            margin: 8px;
+        }
+        h2 { margin: 0 0 8px; font-size: 1.3rem; }
+        .subtitle { opacity: 0.6; font-size: 0.9rem; margin-bottom: 24px; }
+        .field { display: flex; flex-direction: column; margin-bottom: 16px; }
+        label { font-size: 0.85rem; margin-bottom: 4px; opacity: 0.8; }
+        input {
+            all: unset;
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.23);
+            padding: 8px 12px;
+            font-size: 1rem;
+            color: #fff;
+            background: transparent;
+        }
+        input:hover { border-color: white; }
+        input:focus { border-color: rgb(91,116,239); }
+        .hint { font-size: 0.75rem; opacity: 0.5; margin-top: 4px; }
+        .error-box {
+            background: #c62828;
+            border: 1px solid #b71c1c;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            display: none;
+            font-size: 0.9rem;
+        }
+        .success-box {
+            background: #1b5e20;
+            border: 1px solid #2e7d32;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            display: none;
+            font-size: 0.9rem;
+        }
+        .actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+        button {
+            all: unset;
+            cursor: pointer;
+            padding: 8px 20px;
+            border-radius: 4px;
+            background: rgb(91,116,239);
+            color: #fff;
+            font-size: 0.9rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        button:hover { background: rgb(70,95,210); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        footer { color: #fff; padding: 8px; text-align: center; }
+        footer p { margin: 0; font-size: 0.7rem; opacity: 0.5; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Suwayomi</h1>
+        <p>First-Run Setup</p>
+    </header>
+    <main>
+        <div class="card">
+            <h2>Create Admin Account</h2>
+            <p class="subtitle">
+                No users exist yet. Create the first administrator account to get started.
+                This can only be done once — additional users can be managed afterward from
+                the <a href="/admin/users.html" style="color: rgb(91,116,239);">Admin Panel</a>.
+            </p>
+            <div id="error-box" class="error-box"></div>
+            <div id="success-box" class="success-box"></div>
+            <div class="field">
+                <label for="username">Username</label>
+                <input type="text" id="username" autocomplete="username" placeholder="admin" />
+            </div>
+            <div class="field">
+                <label for="password">Password</label>
+                <input type="password" id="password" autocomplete="new-password" />
+                <span class="hint">At least 8 characters, with uppercase, lowercase, and a digit or symbol.</span>
+            </div>
+            <div class="field">
+                <label for="confirm">Confirm Password</label>
+                <input type="password" id="confirm" autocomplete="new-password" />
+            </div>
+            <div class="actions">
+                <button id="submit-btn" onclick="doSetup()">Create Admin</button>
+            </div>
+        </div>
+    </main>
+    <footer>
+        <p>Suwayomi ${BuildConfig.VERSION}</p>
+    </footer>
+    <script>
+        const GQL_URL = '/api/graphql';
+
+        async function graphql(query, variables) {
+            const res = await fetch(GQL_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query, variables }),
+            });
+            const json = await res.json();
+            if (json.errors && json.errors.length > 0) {
+                throw new Error(json.errors[0].message);
+            }
+            return json.data;
+        }
+
+        async function checkSetupNeeded() {
+            try {
+                const data = await graphql('{ needsSetup }');
+                if (!data.needsSetup) {
+                    showError('Setup already complete. Redirecting to login...');
+                    setTimeout(() => { window.location.href = '/login.html'; }, 2000);
+                }
+            } catch (e) {
+                // ignore — may not be required
+            }
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('error-box');
+            el.textContent = msg;
+            el.style.display = 'block';
+            document.getElementById('success-box').style.display = 'none';
+        }
+
+        function showSuccess(msg) {
+            const el = document.getElementById('success-box');
+            el.textContent = msg;
+            el.style.display = 'block';
+            document.getElementById('error-box').style.display = 'none';
+        }
+
+        async function doSetup() {
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            const confirm = document.getElementById('confirm').value;
+
+            if (!username) { showError('Username is required.'); return; }
+            if (!password) { showError('Password is required.'); return; }
+            if (password !== confirm) { showError('Passwords do not match.'); return; }
+
+            const btn = document.getElementById('submit-btn');
+            btn.disabled = true;
+
+            try {
+                const data = await graphql(
+                    `mutation Setup($input: SetupInitialAdminInput!) {
+                        setupInitialAdmin(input: $input) { user { id username role } }
+                    }`,
+                    { input: { username, password } }
+                );
+                const user = data.setupInitialAdmin.user;
+                showSuccess('Admin account created successfully. Redirecting to login...');
+                setTimeout(() => { window.location.href = '/login.html'; }, 2000);
+            } catch (e) {
+                showError(e.message || 'Setup failed. Please try again.');
+                btn.disabled = false;
+            }
+        }
+
+        document.getElementById('confirm').addEventListener('keydown', e => {
+            if (e.key === 'Enter') doSetup();
+        });
+
+        checkSetupNeeded();
+    </script>
+</body>
+</html>

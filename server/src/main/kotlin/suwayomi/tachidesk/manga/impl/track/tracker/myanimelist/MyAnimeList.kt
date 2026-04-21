@@ -14,7 +14,8 @@ import java.io.IOException
 
 class MyAnimeList(
     id: Int,
-) : Tracker(id, "MyAnimeList"),
+    userId: Int? = null,
+) : Tracker(id, "MyAnimeList", userId),
     DeletableTracker {
     companion object {
         const val READING = 1

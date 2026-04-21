@@ -145,14 +145,15 @@ object DBManager {
 
 private val logger = KotlinLogging.logger {}
 
-fun databaseUp() {
+fun databaseUp(database: Database? = null) {
     val db =
-        try {
-            DBManager.setupDatabase()
-        } catch (e: Exception) {
-            logger.error(e) { "Failed to setup Database" }
-            return
-        }
+        database
+            ?: try {
+                DBManager.setupDatabase()
+            } catch (e: Exception) {
+                logger.error(e) { "Failed to setup Database" }
+                return
+            }
 
     logger.info {
         "Using ${db.vendor} database version ${db.version}"
@@ -173,7 +174,7 @@ fun databaseUp() {
 
     try {
         if (serverConfig.databaseType.value == DatabaseType.POSTGRESQL) {
-            transaction {
+            transaction(db) {
                 val schema =
                     Schema(
                         "suwayomi",
@@ -183,7 +184,7 @@ fun databaseUp() {
             }
         }
         val migrations = loadMigrationsFrom("suwayomi.tachidesk.server.database.migration", ServerConfig::class.java)
-        runMigrations(migrations)
+        runMigrations(migrations, db)
     } catch (e: SQLException) {
         logger.error(e) { "Error up-to-database migration" }
         if (System.getProperty("crashOnFailedMigration").toBoolean()) {

@@ -8,8 +8,13 @@ package suwayomi.tachidesk.manga.impl
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import org.jetbrains.exposed.dao.id.EntityID
+import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.JoinType
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.neq
+import org.jetbrains.exposed.sql.or
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.andWhere
 import org.jetbrains.exposed.sql.batchInsert
@@ -22,8 +27,8 @@ import suwayomi.tachidesk.manga.model.dataclass.CategoryDataClass
 import suwayomi.tachidesk.manga.model.table.CategoryMangaTable
 import suwayomi.tachidesk.manga.model.table.CategoryMetaTable
 import suwayomi.tachidesk.manga.model.table.CategoryTable
-import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.toDataClass
+import suwayomi.tachidesk.server.model.table.UserMangaLibraryTable
 import kotlin.collections.component1
 import kotlin.collections.orEmpty
 
@@ -31,11 +36,17 @@ object Category {
     /**
      * The new category will be placed at the end of the list
      */
-    fun createCategory(name: String): Int = createCategories(listOf(name)).first()
+    fun createCategory(
+        name: String,
+        userId: Int? = null,
+    ): Int = createCategories(listOf(name), userId).first()
 
-    fun createCategories(names: List<String>): List<Int> =
+    fun createCategories(
+        names: List<String>,
+        userId: Int? = null,
+    ): List<Int> =
         transaction {
-            val categoryIdToName = getCategoryList().associate { it.id to it.name.lowercase() }
+            val categoryIdToName = getCategoryList(userId).associate { it.id to it.name.lowercase() }
 
             val categoriesToCreate =
                 names
@@ -48,9 +59,12 @@ object Category {
                     .batchInsert(categoriesToCreate) {
                         this[CategoryTable.name] = it
                         this[CategoryTable.order] = Int.MAX_VALUE
+                        if (userId != null) {
+                            this[CategoryTable.userId] = userId
+                        }
                     }.associate { it[CategoryTable.name] to it[CategoryTable.id].value }
 
-            normalizeCategories()
+            normalizeCategories(userId)
 
             names.map {
                 // creating a category named Default is illegal
@@ -68,9 +82,11 @@ object Category {
         isDefault: Boolean?,
         includeInUpdate: Int?,
         includeInDownload: Int?,
+        userId: Int? = null,
     ) {
         transaction {
-            CategoryTable.update({ CategoryTable.id eq categoryId }) {
+            val condition = categoryScopeOp(userId, categoryId)
+            CategoryTable.update({ condition }) {
                 if (
                     categoryId != DEFAULT_CATEGORY_ID &&
                     name != null &&
@@ -91,133 +107,269 @@ object Category {
     fun reorderCategory(
         from: Int,
         to: Int,
+        userId: Int? = null,
     ) {
         if (from == 0 || to == 0) return
         transaction {
-            val categories =
+            val categoriesQuery =
                 CategoryTable
                     .selectAll()
                     .where {
                         CategoryTable.id neq DEFAULT_CATEGORY_ID
-                    }.orderBy(CategoryTable.order to SortOrder.ASC)
-                    .toMutableList()
+                    }
+            if (userId != null) {
+                categoriesQuery.andWhere { CategoryTable.userId eq userId }
+            }
+            val categories = categoriesQuery.orderBy(CategoryTable.order to SortOrder.ASC).toMutableList()
+            if (from > categories.size || to > categories.size) {
+                return@transaction
+            }
             categories.add(to - 1, categories.removeAt(from - 1))
             categories.forEachIndexed { index, cat ->
-                CategoryTable.update({ CategoryTable.id eq cat[CategoryTable.id].value }) {
+                CategoryTable.update({ categoryScopeOp(userId, cat[CategoryTable.id].value) }) {
                     it[CategoryTable.order] = index + 1
                 }
             }
-            normalizeCategories()
+            normalizeCategories(userId)
         }
     }
 
-    fun removeCategory(categoryId: Int) {
+    fun removeCategory(
+        categoryId: Int,
+        userId: Int? = null,
+    ) {
         if (categoryId == DEFAULT_CATEGORY_ID) return
         transaction {
-            CategoryTable.deleteWhere { CategoryTable.id eq categoryId }
-            normalizeCategories()
+            CategoryTable.deleteWhere { categoryScopeOp(userId, categoryId) }
+            normalizeCategories(userId)
         }
     }
 
     /** make sure category order numbers starts from 1 and is consecutive */
-    fun normalizeCategories() {
+    fun normalizeCategories(userId: Int? = null) {
         transaction {
-            CategoryTable
-                .selectAll()
-                .orderBy(CategoryTable.order to SortOrder.ASC)
-                .sortedWith(compareBy({ it[CategoryTable.id].value != 0 }, { it[CategoryTable.order] }))
-                .forEachIndexed { index, cat ->
-                    CategoryTable.update({ CategoryTable.id eq cat[CategoryTable.id].value }) {
-                        it[CategoryTable.order] = index
-                    }
+            val categories =
+                CategoryTable
+                    .selectAll()
+                    .let { query ->
+                        if (userId != null) {
+                            query.where {
+                                (CategoryTable.userId eq userId) or (CategoryTable.id eq DEFAULT_CATEGORY_ID)
+                            }
+                        } else {
+                            query
+                        }
+                    }.orderBy(CategoryTable.order to SortOrder.ASC)
+                    .sortedWith(compareBy({ it[CategoryTable.id].value != 0 }, { it[CategoryTable.order] }))
+
+            categories.forEachIndexed { index, cat ->
+                CategoryTable.update({ categoryScopeOp(userId, cat[CategoryTable.id].value) }) {
+                    it[CategoryTable.order] = index
                 }
+            }
         }
     }
 
-    private fun needsDefaultCategory() =
+    private fun needsDefaultCategory(userId: Int? = null) =
         transaction {
-            MangaTable
-                .leftJoin(CategoryMangaTable)
-                .selectAll()
-                .where { MangaTable.inLibrary eq true }
-                .andWhere { CategoryMangaTable.manga.isNull() }
-                .empty()
-                .not()
+            if (userId == null) {
+                UserMangaLibraryTable
+                    .join(
+                        CategoryMangaTable,
+                        JoinType.LEFT,
+                        additionalConstraint = {
+                            (UserMangaLibraryTable.mangaId eq CategoryMangaTable.manga) and
+                                (UserMangaLibraryTable.userId eq CategoryMangaTable.userId)
+                        },
+                    )
+                    .selectAll()
+                    .where { CategoryMangaTable.manga.isNull() }
+                    .empty()
+                    .not()
+            } else {
+                UserMangaLibraryTable
+                    .join(
+                        CategoryMangaTable,
+                        JoinType.LEFT,
+                        additionalConstraint = {
+                            (UserMangaLibraryTable.mangaId eq CategoryMangaTable.manga) and
+                                (CategoryMangaTable.userId eq userId)
+                        },
+                    ).selectAll()
+                    .where {
+                        (UserMangaLibraryTable.userId eq userId) and
+                            CategoryMangaTable.manga.isNull()
+                    }.empty()
+                    .not()
+            }
         }
 
     const val DEFAULT_CATEGORY_ID = 0
     const val DEFAULT_CATEGORY_NAME = "Default"
 
-    fun getCategoryList(): List<CategoryDataClass> =
+    fun getCategoryList(userId: Int? = null): List<CategoryDataClass> =
         transaction {
             CategoryTable
                 .selectAll()
-                .orderBy(CategoryTable.order to SortOrder.ASC)
+                .let { query ->
+                    if (userId != null) {
+                        query.where {
+                            (CategoryTable.userId eq userId) or (CategoryTable.id eq DEFAULT_CATEGORY_ID)
+                        }
+                    } else {
+                        query
+                    }
+                }.orderBy(CategoryTable.order to SortOrder.ASC)
                 .let {
-                    if (needsDefaultCategory()) {
+                    if (needsDefaultCategory(userId)) {
                         it
                     } else {
                         it.andWhere { CategoryTable.id neq DEFAULT_CATEGORY_ID }
                     }
                 }.map {
-                    CategoryTable.toDataClass(it)
+                    CategoryTable.toDataClass(it, userId)
                 }
         }
 
-    fun getCategoryById(categoryId: Int): CategoryDataClass? =
+    fun getCategoryById(
+        categoryId: Int,
+        userId: Int? = null,
+    ): CategoryDataClass? =
         transaction {
-            CategoryTable.selectAll().where { CategoryTable.id eq categoryId }.firstOrNull()?.let {
-                CategoryTable.toDataClass(it)
+            CategoryTable
+                .selectAll()
+                .where { categoryScopeOp(userId, categoryId) }
+                .firstOrNull()
+                ?.let {
+                    CategoryTable.toDataClass(it, userId)
+                }
+        }
+
+    fun getCategorySize(
+        categoryId: Int,
+        userId: Int? = null,
+    ): Int =
+        transaction {
+            if (userId == null) {
+                if (categoryId == DEFAULT_CATEGORY_ID) {
+                    UserMangaLibraryTable
+                        .join(
+                            CategoryMangaTable,
+                            JoinType.LEFT,
+                            additionalConstraint = {
+                                (UserMangaLibraryTable.mangaId eq CategoryMangaTable.manga) and
+                                    (UserMangaLibraryTable.userId eq CategoryMangaTable.userId)
+                            },
+                        )
+                        .selectAll()
+                        .where { CategoryMangaTable.manga.isNull() }
+                } else {
+                    CategoryMangaTable
+                        .join(
+                            UserMangaLibraryTable,
+                            JoinType.INNER,
+                            additionalConstraint = {
+                                (CategoryMangaTable.userId eq UserMangaLibraryTable.userId) and
+                                    (CategoryMangaTable.manga eq UserMangaLibraryTable.mangaId)
+                            },
+                        )
+                        .selectAll()
+                        .where { CategoryMangaTable.category eq categoryId }
+                }.count().toInt()
+            } else {
+                if (categoryId == DEFAULT_CATEGORY_ID) {
+                    UserMangaLibraryTable
+                        .join(
+                            CategoryMangaTable,
+                            JoinType.LEFT,
+                            additionalConstraint = {
+                                (UserMangaLibraryTable.mangaId eq CategoryMangaTable.manga) and
+                                    (CategoryMangaTable.userId eq userId)
+                            },
+                        ).selectAll()
+                        .where {
+                            (UserMangaLibraryTable.userId eq userId) and
+                                CategoryMangaTable.manga.isNull()
+                        }.count().toInt()
+                } else {
+                    CategoryMangaTable
+                        .selectAll()
+                        .where {
+                            (CategoryMangaTable.userId eq userId) and
+                                (CategoryMangaTable.category eq categoryId)
+                        }.count().toInt()
+                }
             }
         }
 
-    fun getCategorySize(categoryId: Int): Int =
-        transaction {
-            if (categoryId == DEFAULT_CATEGORY_ID) {
-                MangaTable
-                    .leftJoin(CategoryMangaTable)
-                    .selectAll()
-                    .where { MangaTable.inLibrary eq true }
-                    .andWhere { CategoryMangaTable.manga.isNull() }
-            } else {
-                CategoryMangaTable
-                    .leftJoin(MangaTable)
-                    .selectAll()
-                    .where { CategoryMangaTable.category eq categoryId }
-                    .andWhere { MangaTable.inLibrary eq true }
-            }.count().toInt()
+    fun getCategoryMetaMap(
+        categoryId: Int,
+        userId: Int? = null,
+    ): Map<String, String> {
+        if (userId != null && !isCategoryOwnedByUser(categoryId, userId)) {
+            return emptyMap()
         }
 
-    fun getCategoryMetaMap(categoryId: Int): Map<String, String> =
-        transaction {
+        return transaction {
             CategoryMetaTable
                 .selectAll()
                 .where { CategoryMetaTable.ref eq categoryId }
                 .associate { it[CategoryMetaTable.key] to it[CategoryMetaTable.value] }
         }
+    }
 
-    fun getCategoriesMetaMaps(ids: List<Int>): Map<Int, Map<String, String>> =
-        transaction {
+    fun getCategoriesMetaMaps(
+        ids: List<Int>,
+        userId: Int? = null,
+    ): Map<Int, Map<String, String>> {
+        val filteredIds =
+            if (userId == null) {
+                ids.toSet()
+            } else {
+                getOwnedCategoryIds(userId, ids)
+            }
+        if (filteredIds.isEmpty()) {
+            return emptyMap()
+        }
+
+        return transaction {
             CategoryMetaTable
                 .selectAll()
-                .where { CategoryMetaTable.ref inList ids }
+                .where { CategoryMetaTable.ref inList filteredIds.toList() }
                 .groupBy { it[CategoryMetaTable.ref].value }
                 .mapValues { it.value.associate { it[CategoryMetaTable.key] to it[CategoryMetaTable.value] } }
                 .withDefault { emptyMap() }
         }
+    }
 
     fun modifyMeta(
         categoryId: Int,
         key: String,
         value: String,
+        userId: Int? = null,
     ) {
-        modifyCategoriesMetas(mapOf(categoryId to mapOf(key to value)))
+        modifyCategoriesMetas(mapOf(categoryId to mapOf(key to value)), userId)
     }
 
-    fun modifyCategoriesMetas(metaByCategoryId: Map<Int, Map<String, String>>) {
+    fun modifyCategoriesMetas(
+        metaByCategoryId: Map<Int, Map<String, String>>,
+        userId: Int? = null,
+    ) {
+        val normalizedMetaByCategoryId =
+            if (userId == null) {
+                metaByCategoryId
+            } else {
+                val allowedIds = getOwnedCategoryIds(userId, metaByCategoryId.keys)
+                metaByCategoryId.filterKeys { it in allowedIds }
+            }
+
+        if (normalizedMetaByCategoryId.isEmpty()) {
+            return
+        }
+
         transaction {
-            val categoryIds = metaByCategoryId.keys
-            val metaKeys = metaByCategoryId.flatMap { it.value.keys }
+            val categoryIds = normalizedMetaByCategoryId.keys
+            val metaKeys = normalizedMetaByCategoryId.flatMap { it.value.keys }
 
             val dbMetaByCategoryId =
                 CategoryMetaTable
@@ -228,7 +380,7 @@ object Category {
             val existingMetaByMetaId =
                 categoryIds.flatMap { categoryId ->
                     val dbMetaByKey = dbMetaByCategoryId[categoryId].orEmpty().associateBy { it[CategoryMetaTable.key] }
-                    val existingMetas = metaByCategoryId[categoryId].orEmpty().filter { (key) -> key in dbMetaByKey.keys }
+                    val existingMetas = normalizedMetaByCategoryId[categoryId].orEmpty().filter { (key) -> key in dbMetaByKey.keys }
 
                     existingMetas.map { entry ->
                         val metaId = dbMetaByKey[entry.key]!![CategoryMetaTable.id].value
@@ -241,7 +393,7 @@ object Category {
                 categoryIds.flatMap { categoryID ->
                     val dbMetaByKey = dbMetaByCategoryId[categoryID].orEmpty().associateBy { it[CategoryMetaTable.key] }
 
-                    metaByCategoryId[categoryID]
+                    normalizedMetaByCategoryId[categoryID]
                         .orEmpty()
                         .filter { entry -> entry.key !in dbMetaByKey.keys }
                         .map { entry -> categoryID to entry }
@@ -266,4 +418,51 @@ object Category {
             }
         }
     }
+
+    private fun categoryScopeOp(
+        userId: Int?,
+        categoryId: Int,
+    ): Op<Boolean> =
+        if (userId == null) {
+            CategoryTable.id eq categoryId
+        } else {
+            (CategoryTable.id eq categoryId) and ((CategoryTable.userId eq userId) or (CategoryTable.id eq DEFAULT_CATEGORY_ID))
+        }
+
+    private fun getOwnedCategoryIds(
+        userId: Int,
+        categoryIds: Collection<Int>,
+    ): Set<Int> {
+        val distinctIds = categoryIds.toSet()
+        if (distinctIds.isEmpty()) {
+            return emptySet()
+        }
+
+        return transaction {
+            CategoryTable
+                .select(CategoryTable.id)
+                .where {
+                    (CategoryTable.id inList distinctIds.toList()) and
+                        ((CategoryTable.userId eq userId) or (CategoryTable.id eq DEFAULT_CATEGORY_ID))
+                }.map { it[CategoryTable.id].value }
+                .toSet()
+        }
+    }
+
+    private fun isCategoryOwnedByUser(
+        categoryId: Int,
+        userId: Int,
+    ): Boolean {
+        if (categoryId == DEFAULT_CATEGORY_ID) {
+            return true
+        }
+
+        return transaction {
+            CategoryTable
+                .select(CategoryTable.id)
+                .where { (CategoryTable.id eq categoryId) and (CategoryTable.userId eq userId) }
+                .firstOrNull() != null
+        }
+    }
 }
+

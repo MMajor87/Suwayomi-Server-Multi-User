@@ -19,11 +19,13 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.Op
+import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.batchInsert
 import org.jetbrains.exposed.sql.deleteWhere
+import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.statements.BatchUpdateStatement
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -42,6 +44,8 @@ import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.PageTable
 import suwayomi.tachidesk.manga.model.table.toDataClass
+import suwayomi.tachidesk.server.model.table.UserChapterTable
+import suwayomi.tachidesk.server.model.table.UserMangaLibraryTable
 import suwayomi.tachidesk.server.serverConfig
 import java.time.Instant
 import java.util.TreeSet
@@ -59,24 +63,203 @@ private fun List<ChapterDataClass>.removeDuplicates(currentChapter: ChapterDataC
 object Chapter {
     private val logger = KotlinLogging.logger { }
 
+    data class UserChapterState(
+        val isRead: Boolean,
+        val isBookmarked: Boolean,
+        val lastPageRead: Int,
+        val lastReadAt: Long,
+    )
+
+    fun getUserChapterStateMap(
+        userId: Int,
+        chapterIds: Collection<Int>,
+    ): Map<Int, UserChapterState> {
+        val distinctChapterIds = chapterIds.toSet()
+        if (distinctChapterIds.isEmpty()) {
+            return emptyMap()
+        }
+
+        return transaction {
+            getUserChapterStateMapInternal(userId, distinctChapterIds)
+        }
+    }
+
+    fun withUserState(
+        chapter: ChapterDataClass,
+        userId: Int?,
+    ): ChapterDataClass {
+        if (userId == null) {
+            return chapter
+        }
+
+        val userState = getUserChapterStateMap(userId, setOf(chapter.id))[chapter.id]
+        return chapter.copy(
+            read = userState?.isRead ?: false,
+            bookmarked = userState?.isBookmarked ?: false,
+            lastPageRead = userState?.lastPageRead ?: 0,
+            lastReadAt = userState?.lastReadAt ?: 0,
+        )
+    }
+
+    fun setUserProgress(
+        userId: Int,
+        chapterId: Int,
+        isRead: Boolean? = null,
+        isBookmarked: Boolean? = null,
+        lastPageRead: Int? = null,
+        lastReadAt: Long? = null,
+    ) {
+        transaction {
+            upsertUserChapterStatesInternal(
+                userId = userId,
+                chapterIds = listOf(chapterId),
+                isRead = isRead,
+                isBookmarked = isBookmarked,
+                lastPageRead = lastPageRead,
+                lastReadAt = lastReadAt,
+            )
+        }
+    }
+
+    private fun getUserChapterStateMapInternal(
+        userId: Int,
+        chapterIds: Collection<Int>,
+    ): Map<Int, UserChapterState> {
+        val distinctChapterIds = chapterIds.toSet()
+        if (distinctChapterIds.isEmpty()) {
+            return emptyMap()
+        }
+
+        return UserChapterTable
+            .selectAll()
+            .where {
+                (UserChapterTable.userId eq userId) and
+                    (UserChapterTable.chapterId inList distinctChapterIds)
+            }.associate {
+                it[UserChapterTable.chapterId].value to
+                    UserChapterState(
+                        isRead = it[UserChapterTable.isRead],
+                        isBookmarked = it[UserChapterTable.isBookmarked],
+                        lastPageRead = it[UserChapterTable.lastPageRead],
+                        lastReadAt = it[UserChapterTable.lastReadAt],
+                    )
+            }
+    }
+
+    private fun toDataClassForUser(
+        row: ResultRow,
+        userId: Int?,
+        includeChapterCount: Boolean = true,
+        includeChapterMeta: Boolean = true,
+        chapterStateMap: Map<Int, UserChapterState> = emptyMap(),
+    ): ChapterDataClass {
+        val baseChapter =
+            ChapterTable.toDataClass(
+                chapterEntry = row,
+                includeChapterCount = includeChapterCount,
+                includeChapterMeta = includeChapterMeta,
+            )
+        if (userId == null) {
+            return baseChapter
+        }
+
+        val state = chapterStateMap[baseChapter.id]
+        return baseChapter.copy(
+            read = state?.isRead ?: false,
+            bookmarked = state?.isBookmarked ?: false,
+            lastPageRead = state?.lastPageRead ?: 0,
+            lastReadAt = state?.lastReadAt ?: 0,
+        )
+    }
+
+    private fun upsertUserChapterStatesInternal(
+        userId: Int,
+        chapterIds: Collection<Int>,
+        isRead: Boolean? = null,
+        isBookmarked: Boolean? = null,
+        lastPageRead: Int? = null,
+        lastReadAt: Long? = null,
+    ) {
+        val distinctChapterIds = chapterIds.toSet()
+        if (distinctChapterIds.isEmpty()) {
+            return
+        }
+
+        val now = Instant.now().epochSecond
+        val existingRows =
+            UserChapterTable
+                .selectAll()
+                .where {
+                    (UserChapterTable.userId eq userId) and
+                        (UserChapterTable.chapterId inList distinctChapterIds)
+                }.associateBy { it[UserChapterTable.chapterId].value }
+
+        distinctChapterIds.forEach { chapterId ->
+            val existingRow = existingRows[chapterId]
+            if (existingRow == null) {
+                UserChapterTable.insert { insert ->
+                    insert[UserChapterTable.userId] = userId
+                    insert[UserChapterTable.chapterId] = chapterId
+                    insert[UserChapterTable.isRead] = isRead ?: false
+                    insert[UserChapterTable.isBookmarked] = isBookmarked ?: false
+                    insert[UserChapterTable.lastPageRead] = lastPageRead ?: 0
+                    insert[UserChapterTable.lastReadAt] =
+                        when {
+                            lastReadAt != null -> lastReadAt
+                            lastPageRead != null -> now
+                            else -> 0
+                        }
+                    insert[UserChapterTable.updatedAt] = now
+                }
+            } else {
+                val existingId = existingRow[UserChapterTable.id].value
+                UserChapterTable.update({ UserChapterTable.id eq existingId }) { update ->
+                    isRead?.let { update[UserChapterTable.isRead] = it }
+                    isBookmarked?.let { update[UserChapterTable.isBookmarked] = it }
+                    if (lastPageRead != null) {
+                        update[UserChapterTable.lastPageRead] = lastPageRead
+                        update[UserChapterTable.lastReadAt] = lastReadAt ?: now
+                    } else if (lastReadAt != null) {
+                        update[UserChapterTable.lastReadAt] = lastReadAt
+                    }
+                    update[UserChapterTable.updatedAt] = now
+                }
+            }
+        }
+    }
+
     /** get chapter list when showing a manga */
     suspend fun getChapterList(
         mangaId: Int,
         onlineFetch: Boolean = false,
+        userId: Int? = null,
     ): List<ChapterDataClass> =
         if (onlineFetch) {
-            getSourceChapters(mangaId)
+            getSourceChapters(mangaId, userId)
         } else {
             transaction {
-                ChapterTable
-                    .selectAll()
-                    .where { ChapterTable.manga eq mangaId }
-                    .orderBy(ChapterTable.sourceOrder to SortOrder.DESC)
-                    .map {
-                        ChapterTable.toDataClass(it)
+                val rows =
+                    ChapterTable
+                        .selectAll()
+                        .where { ChapterTable.manga eq mangaId }
+                        .orderBy(ChapterTable.sourceOrder to SortOrder.DESC)
+                        .toList()
+                val chapterStates =
+                    if (userId == null) {
+                        emptyMap()
+                    } else {
+                        getUserChapterStateMapInternal(userId, rows.map { it[ChapterTable.id].value })
                     }
+
+                rows.map {
+                    toDataClassForUser(
+                        row = it,
+                        userId = userId,
+                        chapterStateMap = chapterStates,
+                    )
+                }
             }.ifEmpty {
-                getSourceChapters(mangaId)
+                getSourceChapters(mangaId, userId)
             }
         }
 
@@ -89,7 +272,10 @@ object Chapter {
                 .toInt()
         }
 
-    private suspend fun getSourceChapters(mangaId: Int): List<ChapterDataClass> {
+    private suspend fun getSourceChapters(
+        mangaId: Int,
+        userId: Int? = null,
+    ): List<ChapterDataClass> {
         val chapterList = fetchChapterList(mangaId)
 
         val dbChapterMap =
@@ -102,30 +288,38 @@ object Chapter {
 
         val chapterIds = chapterList.map { dbChapterMap.getValue(it.url)[ChapterTable.id] }
         val chapterMetas = getChaptersMetaMaps(chapterIds.map { it.value })
+        val chapterStates =
+            if (userId == null) {
+                emptyMap()
+            } else {
+                getUserChapterStateMap(userId, chapterIds.map { it.value })
+            }
 
         return chapterList.mapIndexed { index, it ->
 
             val dbChapter = dbChapterMap.getValue(it.url)
+            val chapterId = dbChapter[ChapterTable.id].value
+            val userState = chapterStates[chapterId]
 
             ChapterDataClass(
-                id = dbChapter[ChapterTable.id].value,
+                id = chapterId,
                 url = it.url,
                 name = it.name,
                 uploadDate = it.date_upload,
                 chapterNumber = it.chapter_number,
                 scanlator = it.scanlator,
                 mangaId = mangaId,
-                read = dbChapter[ChapterTable.isRead],
-                bookmarked = dbChapter[ChapterTable.isBookmarked],
-                lastPageRead = dbChapter[ChapterTable.lastPageRead],
-                lastReadAt = dbChapter[ChapterTable.lastReadAt],
+                read = if (userId == null) dbChapter[ChapterTable.isRead] else (userState?.isRead ?: false),
+                bookmarked = if (userId == null) dbChapter[ChapterTable.isBookmarked] else (userState?.isBookmarked ?: false),
+                lastPageRead = if (userId == null) dbChapter[ChapterTable.lastPageRead] else (userState?.lastPageRead ?: 0),
+                lastReadAt = if (userId == null) dbChapter[ChapterTable.lastReadAt] else (userState?.lastReadAt ?: 0),
                 index = chapterList.size - index,
                 fetchedAt = dbChapter[ChapterTable.fetchedAt],
                 realUrl = dbChapter[ChapterTable.realUrl],
                 downloaded = dbChapter[ChapterTable.isDownloaded],
                 pageCount = dbChapter[ChapterTable.pageCount],
                 chapterCount = chapterList.size,
-                meta = chapterMetas.getValue(dbChapter[ChapterTable.id].value),
+                meta = chapterMetas.getValue(chapterId),
             )
         }
     }
@@ -431,6 +625,7 @@ object Chapter {
         isBookmarked: Boolean?,
         markPrevRead: Boolean?,
         lastPageRead: Int?,
+        userId: Int? = null,
     ): Int {
         val chapterId =
             transaction {
@@ -443,23 +638,46 @@ object Chapter {
                 val chapterIdValue = chapter[ChapterTable.id].value
 
                 if (listOf(isRead, isBookmarked, lastPageRead).any { it != null }) {
-                    ChapterTable.update({ (ChapterTable.manga eq mangaId) and (ChapterTable.sourceOrder eq chapterIndex) }) { update ->
-                        isRead?.also {
-                            update[ChapterTable.isRead] = it
+                    if (userId == null) {
+                        ChapterTable.update({ (ChapterTable.manga eq mangaId) and (ChapterTable.sourceOrder eq chapterIndex) }) { update ->
+                            isRead?.also {
+                                update[ChapterTable.isRead] = it
+                            }
+                            isBookmarked?.also {
+                                update[ChapterTable.isBookmarked] = it
+                            }
+                            lastPageRead?.also {
+                                update[ChapterTable.lastPageRead] = it
+                                update[lastReadAt] = Instant.now().epochSecond
+                            }
                         }
-                        isBookmarked?.also {
-                            update[ChapterTable.isBookmarked] = it
-                        }
-                        lastPageRead?.also {
-                            update[ChapterTable.lastPageRead] = it
-                            update[lastReadAt] = Instant.now().epochSecond
-                        }
+                    } else {
+                        upsertUserChapterStatesInternal(
+                            userId = userId,
+                            chapterIds = listOf(chapterIdValue),
+                            isRead = isRead,
+                            isBookmarked = isBookmarked,
+                            lastPageRead = lastPageRead,
+                        )
                     }
                 }
 
                 markPrevRead?.let {
-                    ChapterTable.update({ (ChapterTable.manga eq mangaId) and (ChapterTable.sourceOrder less chapterIndex) }) {
-                        it[ChapterTable.isRead] = markPrevRead
+                    if (userId == null) {
+                        ChapterTable.update({ (ChapterTable.manga eq mangaId) and (ChapterTable.sourceOrder less chapterIndex) }) {
+                            it[ChapterTable.isRead] = markPrevRead
+                        }
+                    } else {
+                        val previousChapterIds =
+                            ChapterTable
+                                .select(ChapterTable.id)
+                                .where { (ChapterTable.manga eq mangaId) and (ChapterTable.sourceOrder less chapterIndex) }
+                                .map { row -> row[ChapterTable.id].value }
+                        upsertUserChapterStatesInternal(
+                            userId = userId,
+                            chapterIds = previousChapterIds,
+                            isRead = markPrevRead,
+                        )
                     }
                 }
 
@@ -467,7 +685,7 @@ object Chapter {
             }
 
         if (isRead == true || markPrevRead == true) {
-            Track.asyncTrackChapter(setOf(mangaId))
+            Track.asyncTrackChapter(setOf(mangaId), userId)
         }
 
         return chapterId
@@ -497,6 +715,7 @@ object Chapter {
     fun modifyChapters(
         input: MangaChapterBatchEditInput,
         mangaId: Int? = null,
+        userId: Int? = null,
     ) {
         // Make sure change is defined
         if (input.change == null) return
@@ -544,19 +763,36 @@ object Chapter {
                 }
             } ?: return
 
-        transaction {
-            val now = Instant.now().epochSecond
-            ChapterTable.update({ condition }) { update ->
-                isRead?.also {
-                    update[ChapterTable.isRead] = it
+        if (userId == null) {
+            transaction {
+                val now = Instant.now().epochSecond
+                ChapterTable.update({ condition }) { update ->
+                    isRead?.also {
+                        update[ChapterTable.isRead] = it
+                    }
+                    isBookmarked?.also {
+                        update[ChapterTable.isBookmarked] = it
+                    }
+                    lastPageRead?.also {
+                        update[ChapterTable.lastPageRead] = it
+                        update[lastReadAt] = now
+                    }
                 }
-                isBookmarked?.also {
-                    update[ChapterTable.isBookmarked] = it
-                }
-                lastPageRead?.also {
-                    update[ChapterTable.lastPageRead] = it
-                    update[lastReadAt] = now
-                }
+            }
+        } else {
+            transaction {
+                val chapterIds =
+                    ChapterTable
+                        .select(ChapterTable.id)
+                        .where(condition)
+                        .map { it[ChapterTable.id].value }
+                upsertUserChapterStatesInternal(
+                    userId = userId,
+                    chapterIds = chapterIds,
+                    isRead = isRead,
+                    isBookmarked = isBookmarked,
+                    lastPageRead = lastPageRead,
+                )
             }
         }
 
@@ -569,7 +805,7 @@ object Chapter {
                         .map { it[ChapterTable.manga].value }
                         .toSet()
                 }
-            Track.asyncTrackChapter(mangaIds)
+            Track.asyncTrackChapter(mangaIds, userId)
         }
     }
 
@@ -734,19 +970,60 @@ object Chapter {
         }
     }
 
-    fun getRecentChapters(pageNum: Int): PaginatedList<MangaChapterDataClass> =
+    fun getRecentChapters(
+        pageNum: Int,
+        userId: Int,
+    ): PaginatedList<MangaChapterDataClass> =
         paginatedFrom(pageNum) {
-            transaction {
-                (ChapterTable innerJoin MangaTable)
-                    .selectAll()
-                    .where { (MangaTable.inLibrary eq true) and (ChapterTable.fetchedAt greater MangaTable.inLibraryAt) }
-                    .orderBy(ChapterTable.fetchedAt to SortOrder.DESC)
-                    .map {
+            if (Library.isAdmin(userId)) {
+                transaction {
+                    val rows =
+                        (ChapterTable innerJoin MangaTable)
+                            .selectAll()
+                            .where { (MangaTable.inLibrary eq true) and (ChapterTable.fetchedAt greater MangaTable.inLibraryAt) }
+                            .orderBy(ChapterTable.fetchedAt to SortOrder.DESC)
+                            .toList()
+                    val chapterStates = getUserChapterStateMapInternal(userId, rows.map { it[ChapterTable.id].value })
+
+                    rows.map {
                         MangaChapterDataClass(
                             MangaTable.toDataClass(it),
-                            ChapterTable.toDataClass(it),
+                            toDataClassForUser(
+                                row = it,
+                                userId = userId,
+                                chapterStateMap = chapterStates,
+                            ),
                         )
                     }
+                }
+            } else {
+                transaction {
+                    val rows =
+                        (ChapterTable innerJoin MangaTable innerJoin UserMangaLibraryTable)
+                            .selectAll()
+                            .where {
+                                (UserMangaLibraryTable.userId eq userId) and
+                                    (ChapterTable.fetchedAt greater UserMangaLibraryTable.inLibraryAt)
+                            }.orderBy(ChapterTable.fetchedAt to SortOrder.DESC)
+                            .toList()
+                    val chapterStates = getUserChapterStateMapInternal(userId, rows.map { it[ChapterTable.id].value })
+
+                    rows.map {
+                        MangaChapterDataClass(
+                            MangaTable
+                                .toDataClass(it)
+                                .copy(
+                                    inLibrary = true,
+                                    inLibraryAt = it[UserMangaLibraryTable.inLibraryAt],
+                                ),
+                            toDataClassForUser(
+                                row = it,
+                                userId = userId,
+                                chapterStateMap = chapterStates,
+                            ),
+                        )
+                    }
+                }
             }
         }
 
@@ -754,6 +1031,7 @@ object Chapter {
         mangaId: Int,
         chapterIndex: Int,
         pageNo: Int,
+        userId: Int? = null,
     ): Int {
         val chapterData =
             transaction {
@@ -763,7 +1041,19 @@ object Chapter {
                         (ChapterTable.sourceOrder eq chapterIndex) and
                             (ChapterTable.manga eq mangaId)
                     }.first()
-                    .let { ChapterTable.toDataClass(it) }
+                    .let {
+                        val chapterStates =
+                            if (userId == null) {
+                                emptyMap()
+                            } else {
+                                getUserChapterStateMapInternal(userId, setOf(it[ChapterTable.id].value))
+                            }
+                        toDataClassForUser(
+                            row = it,
+                            userId = userId,
+                            chapterStateMap = chapterStates,
+                        )
+                    }
             }
 
         val oneIndexedPageNo = pageNo.inc()
@@ -776,6 +1066,7 @@ object Chapter {
             lastPageRead = pageNo,
             isBookmarked = null,
             markPrevRead = null,
+            userId = userId,
         )
 
         return chapterData.id
