@@ -11,10 +11,12 @@ import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
 import com.expediagroup.graphql.server.extensions.getValueFromDataLoader
 import graphql.schema.DataFetchingEnvironment
 import org.jetbrains.exposed.sql.Column
+import org.jetbrains.exposed.sql.JoinType
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.greater
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
+import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.transactions.transaction
 import suwayomi.tachidesk.graphql.directives.RequireAuth
 import suwayomi.tachidesk.graphql.queries.filter.BooleanFilter
@@ -29,6 +31,7 @@ import suwayomi.tachidesk.graphql.queries.filter.andFilterWithCompare
 import suwayomi.tachidesk.graphql.queries.filter.andFilterWithCompareEntity
 import suwayomi.tachidesk.graphql.queries.filter.andFilterWithCompareString
 import suwayomi.tachidesk.graphql.queries.filter.applyOps
+import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.graphql.server.primitives.Cursor
 import suwayomi.tachidesk.graphql.server.primitives.Order
 import suwayomi.tachidesk.graphql.server.primitives.OrderBy
@@ -40,9 +43,12 @@ import suwayomi.tachidesk.graphql.server.primitives.lessNotUnique
 import suwayomi.tachidesk.graphql.server.primitives.maybeSwap
 import suwayomi.tachidesk.graphql.types.MangaNodeList
 import suwayomi.tachidesk.graphql.types.MangaType
+import suwayomi.tachidesk.manga.impl.Library
 import suwayomi.tachidesk.manga.model.table.CategoryMangaTable
 import suwayomi.tachidesk.manga.model.table.MangaStatus
 import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
+import suwayomi.tachidesk.server.user.requireUser
 import java.util.concurrent.CompletableFuture
 
 class MangaQuery {
@@ -219,6 +225,7 @@ class MangaQuery {
 
     @RequireAuth
     fun mangas(
+        dataFetchingEnvironment: DataFetchingEnvironment,
         condition: MangaCondition? = null,
         filter: MangaFilter? = null,
         @GraphQLDeprecated(
@@ -238,15 +245,26 @@ class MangaQuery {
         last: Int? = null,
         offset: Int? = null,
     ): MangaNodeList {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
+        val sqlCondition = condition?.copy(inLibrary = null, inLibraryAt = null)
+        val sqlFilter = filter?.copy(inLibrary = null, inLibraryAt = null)
+
         val queryResults =
             transaction {
                 val res =
                     MangaTable
-                        .leftJoin(CategoryMangaTable)
+                        .join(
+                            CategoryMangaTable,
+                            JoinType.LEFT,
+                            additionalConstraint = {
+                                (CategoryMangaTable.manga eq MangaTable.id) and
+                                    (CategoryMangaTable.userId eq userId)
+                            },
+                        )
                         .select(MangaTable.columns)
                         .withDistinctOn(MangaTable.id)
 
-                res.applyOps(condition, filter)
+                res.applyOps(sqlCondition, sqlFilter)
 
                 if (order != null || orderBy != null || (last != null || before != null)) {
                     val baseSort = listOf(MangaOrder(MangaOrderBy.ID, SortOrder.ASC))
@@ -282,7 +300,27 @@ class MangaQuery {
 
         val getAsCursor: (MangaType) -> Cursor = (order?.firstOrNull()?.by ?: MangaOrderBy.ID)::asCursor
 
-        val resultsAsType = queryResults.results.map { MangaType(it) }
+        val libraryEntries =
+            Library.getUserLibraryEntryMap(
+                userId,
+                queryResults.results.map { it[MangaTable.id].value },
+            )
+
+        val resultsAsType =
+            queryResults.results
+                .map { row ->
+                    val mangaId = row[MangaTable.id].value
+                    val inLibraryAt = libraryEntries[mangaId]
+                    MangaType(row, inLibrary = inLibraryAt != null, inLibraryAt = inLibraryAt ?: 0L)
+                }.filter {
+                    val conditionMatches =
+                        (condition?.inLibrary == null || it.inLibrary == condition.inLibrary) &&
+                            (condition?.inLibraryAt == null || it.inLibraryAt == condition.inLibraryAt)
+                    val filterMatches =
+                        (filter?.inLibrary?.equalTo == null || it.inLibrary == filter.inLibrary.equalTo) &&
+                            (filter?.inLibraryAt?.equalTo == null || it.inLibraryAt == filter.inLibraryAt.equalTo)
+                    conditionMatches && filterMatches
+                }
 
         return MangaNodeList(
             resultsAsType,

@@ -9,13 +9,18 @@ package suwayomi.tachidesk.graphql.subscriptions
 
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
 import com.expediagroup.graphql.generator.annotations.GraphQLDescription
+import graphql.schema.DataFetchingEnvironment
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import suwayomi.tachidesk.graphql.directives.RequireAuth
+import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.graphql.types.UpdateStatus
 import suwayomi.tachidesk.graphql.types.UpdaterUpdates
+import suwayomi.tachidesk.manga.impl.Library
 import suwayomi.tachidesk.manga.impl.update.IUpdater
 import suwayomi.tachidesk.manga.impl.update.UpdateUpdates
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
+import suwayomi.tachidesk.server.user.requireUser
 import uy.kohesive.injekt.injectLazy
 
 class UpdateSubscription {
@@ -23,10 +28,13 @@ class UpdateSubscription {
 
     @GraphQLDeprecated("Replaced with updates", ReplaceWith("updates(input)"))
     @RequireAuth
-    fun updateStatusChanged(): Flow<UpdateStatus> =
-        updater.status.map { updateStatus ->
-            UpdateStatus(updateStatus)
+    fun updateStatusChanged(dataFetchingEnvironment: DataFetchingEnvironment): Flow<UpdateStatus> {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
+
+        return updater.status.map { updateStatus ->
+            UpdateStatus(Library.filterUpdateStatusForUser(userId, updateStatus))
         }
+    }
 
     data class LibraryUpdateStatusChangedInput(
         @GraphQLDescription(
@@ -40,18 +48,23 @@ class UpdateSubscription {
     )
 
     @RequireAuth
-    fun libraryUpdateStatusChanged(input: LibraryUpdateStatusChangedInput): Flow<UpdaterUpdates> {
+    fun libraryUpdateStatusChanged(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: LibraryUpdateStatusChangedInput,
+    ): Flow<UpdaterUpdates> {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
         val omitUpdates = input.maxUpdates != null
         val maxUpdates = input.maxUpdates ?: 50
 
         return updater.updates.map { updates ->
-            val categoryUpdatesCount = updates.categoryUpdates.size
-            val mangaUpdatesCount = updates.mangaUpdates.size
+            val scopedUpdates = Library.filterUpdateUpdatesForUser(userId, updates)
+            val categoryUpdatesCount = scopedUpdates.categoryUpdates.size
+            val mangaUpdatesCount = scopedUpdates.mangaUpdates.size
             val totalUpdatesCount = categoryUpdatesCount + mangaUpdatesCount
 
             val needToOmitUpdates = omitUpdates && totalUpdatesCount > maxUpdates
             if (!needToOmitUpdates) {
-                return@map UpdaterUpdates(updates, omittedUpdates = false)
+                return@map UpdaterUpdates(scopedUpdates, omittedUpdates = false)
             }
 
             val maxUpdatesAfterCategoryUpdates = (maxUpdates - categoryUpdatesCount).coerceAtLeast(0)
@@ -61,14 +74,14 @@ class UpdateSubscription {
             // update has been handled
             UpdaterUpdates(
                 UpdateUpdates(
-                    updates.isRunning,
-                    updates.categoryUpdates.take(maxUpdates),
-                    updates.mangaUpdates.take(maxUpdatesAfterCategoryUpdates),
-                    updates.totalJobs,
-                    updates.finishedJobs,
-                    updates.skippedCategoriesCount,
-                    updates.skippedMangasCount,
-                    updates.initial,
+                    scopedUpdates.isRunning,
+                    scopedUpdates.categoryUpdates.take(maxUpdates),
+                    scopedUpdates.mangaUpdates.take(maxUpdatesAfterCategoryUpdates),
+                    scopedUpdates.totalJobs,
+                    scopedUpdates.finishedJobs,
+                    scopedUpdates.skippedCategoriesCount,
+                    scopedUpdates.skippedMangasCount,
+                    scopedUpdates.initial,
                 ),
                 omittedUpdates = true,
             )

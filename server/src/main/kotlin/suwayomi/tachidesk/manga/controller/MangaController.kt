@@ -12,8 +12,6 @@ import io.javalin.http.HttpStatus
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
-import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.update
 import suwayomi.tachidesk.manga.impl.CategoryManga
 import suwayomi.tachidesk.manga.impl.Chapter
 import suwayomi.tachidesk.manga.impl.ChapterDownloadHelper
@@ -25,7 +23,6 @@ import suwayomi.tachidesk.manga.impl.sync.KoreaderSyncService
 import suwayomi.tachidesk.manga.model.dataclass.CategoryDataClass
 import suwayomi.tachidesk.manga.model.dataclass.ChapterDataClass
 import suwayomi.tachidesk.manga.model.dataclass.MangaDataClass
-import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.JavalinSetup.future
 import suwayomi.tachidesk.server.JavalinSetup.getAttribute
@@ -54,10 +51,10 @@ object MangaController {
                 }
             },
             behaviorOf = { ctx, mangaId, onlineFetch ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 ctx.future {
                     future {
-                        Manga.getManga(mangaId, onlineFetch)
+                        Manga.getManga(mangaId, onlineFetch, userId)
                     }.thenApply { ctx.json(it) }
                 }
             },
@@ -79,10 +76,10 @@ object MangaController {
                 }
             },
             behaviorOf = { ctx, mangaId, onlineFetch ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 ctx.future {
                     future {
-                        Manga.getMangaFull(mangaId, onlineFetch)
+                        Manga.getMangaFull(mangaId, onlineFetch, userId)
                     }.thenApply { ctx.json(it) }
                 }
             },
@@ -131,9 +128,9 @@ object MangaController {
                 }
             },
             behaviorOf = { ctx, mangaId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 ctx.future {
-                    future { Library.addMangaToLibrary(mangaId) }
+                    future { Library.addMangaToLibrary(userId, mangaId) }
                         .thenApply { ctx.status(HttpStatus.OK) }
                 }
             },
@@ -154,9 +151,9 @@ object MangaController {
                 }
             },
             behaviorOf = { ctx, mangaId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 ctx.future {
-                    future { Library.removeMangaFromLibrary(mangaId) }
+                    future { Library.removeMangaFromLibrary(userId, mangaId) }
                         .thenApply { ctx.status(HttpStatus.OK) }
                 }
             },
@@ -177,8 +174,8 @@ object MangaController {
                 }
             },
             behaviorOf = { ctx, mangaId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
-                ctx.json(CategoryManga.getMangaCategories(mangaId))
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                ctx.json(CategoryManga.getMangaCategories(mangaId, userId))
             },
             withResults = {
                 json<Array<CategoryDataClass>>(HttpStatus.OK)
@@ -197,8 +194,8 @@ object MangaController {
                 }
             },
             behaviorOf = { ctx, mangaId, categoryId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
-                CategoryManga.addMangaToCategory(mangaId, categoryId)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                CategoryManga.addMangaToCategory(mangaId, categoryId, userId)
                 ctx.status(200)
             },
             withResults = {
@@ -218,8 +215,8 @@ object MangaController {
                 }
             },
             behaviorOf = { ctx, mangaId, categoryId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
-                CategoryManga.removeMangaFromCategory(mangaId, categoryId)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                CategoryManga.removeMangaFromCategory(mangaId, categoryId, userId)
                 ctx.status(200)
             },
             withResults = {
@@ -266,9 +263,9 @@ object MangaController {
                 }
             },
             behaviorOf = { ctx, mangaId, onlineFetch ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 ctx.future {
-                    future { Chapter.getChapterList(mangaId, onlineFetch) }
+                    future { Chapter.getChapterList(mangaId, onlineFetch, userId) }
                         .thenApply { ctx.json(it) }
                 }
             },
@@ -290,9 +287,9 @@ object MangaController {
                 body<Chapter.MangaChapterBatchEditInput>()
             },
             behaviorOf = { ctx, mangaId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 val input = json.decodeFromString<Chapter.MangaChapterBatchEditInput>(ctx.body())
-                Chapter.modifyChapters(input, mangaId)
+                Chapter.modifyChapters(input, mangaId, userId)
             },
             withResults = {
                 httpCode(HttpStatus.OK)
@@ -310,7 +307,7 @@ object MangaController {
                 body<Chapter.ChapterBatchEditInput>()
             },
             behaviorOf = { ctx ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 val input = json.decodeFromString<Chapter.ChapterBatchEditInput>(ctx.body())
                 Chapter.modifyChapters(
                     Chapter.MangaChapterBatchEditInput(
@@ -318,6 +315,7 @@ object MangaController {
                         null,
                         input.change,
                     ),
+                    userId = userId,
                 )
             },
             withResults = {
@@ -337,21 +335,22 @@ object MangaController {
                 }
             },
             behaviorOf = { ctx, mangaId, chapterIndex ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 ctx.future {
                     future {
-                        var chapter = getChapterDownloadReadyByIndex(chapterIndex, mangaId)
-                        val syncResult = KoreaderSyncService.checkAndPullProgress(chapter.id)
+                        var chapter = Chapter.withUserState(getChapterDownloadReadyByIndex(chapterIndex, mangaId), userId)
+                        val syncResult = KoreaderSyncService.checkAndPullProgress(chapter.id, userId)
 
                         if (syncResult != null) {
                             if (syncResult.shouldUpdate) {
-                                // Update DB for SILENT and RECEIVE
-                                transaction {
-                                    ChapterTable.update({ ChapterTable.id eq chapter.id }) {
-                                        it[lastPageRead] = syncResult.pageRead
-                                        it[lastReadAt] = syncResult.timestamp
-                                    }
-                                }
+                                Chapter.setUserProgress(
+                                    userId = userId,
+                                    chapterId = chapter.id,
+                                    isRead = null,
+                                    isBookmarked = null,
+                                    lastPageRead = syncResult.pageRead,
+                                    lastReadAt = syncResult.timestamp,
+                                )
                             }
                             // For PROMPT, SILENT, and RECEIVE, return the remote progress
                             chapter =
@@ -386,12 +385,12 @@ object MangaController {
                 }
             },
             behaviorOf = { ctx, mangaId, chapterIndex, read, bookmarked, markPrevRead, lastPageRead ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
-                val chapterId = Chapter.modifyChapter(mangaId, chapterIndex, read, bookmarked, markPrevRead, lastPageRead)
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val chapterId = Chapter.modifyChapter(mangaId, chapterIndex, read, bookmarked, markPrevRead, lastPageRead, userId)
 
                 // Sync with KoreaderSync when progress is updated
                 if (lastPageRead != null || read == true) {
-                    GlobalScope.launch { KoreaderSyncService.pushProgress(chapterId) }
+                    GlobalScope.launch { KoreaderSyncService.pushProgress(chapterId, userId) }
                 }
 
                 ctx.status(200)
@@ -488,10 +487,11 @@ object MangaController {
                         ctx.result(it.first)
 
                         if (updateProgress == true) {
-                            val chapterId = Chapter.updateChapterProgress(mangaId, chapterIndex, pageNo = index)
+                            val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                            val chapterId = Chapter.updateChapterProgress(mangaId, chapterIndex, pageNo = index, userId = userId)
                             // Sync progress with KoreaderSync if chapter update was successful
                             if (chapterId != -1) {
-                                GlobalScope.launch { KoreaderSyncService.pushProgress(chapterId) }
+                                GlobalScope.launch { KoreaderSyncService.pushProgress(chapterId, userId) }
                             }
                         }
                     }

@@ -1,6 +1,8 @@
 package suwayomi.tachidesk.graphql.queries
 
 import com.expediagroup.graphql.generator.annotations.GraphQLDeprecated
+import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.transactions.transaction
 import suwayomi.tachidesk.global.impl.AppUpdate
 import suwayomi.tachidesk.graphql.directives.RequireAuth
 import suwayomi.tachidesk.graphql.types.AboutWebUI
@@ -9,6 +11,7 @@ import suwayomi.tachidesk.graphql.types.WebUIUpdateCheck
 import suwayomi.tachidesk.graphql.types.WebUIUpdateStatus
 import suwayomi.tachidesk.server.JavalinSetup.future
 import suwayomi.tachidesk.server.generated.BuildConfig
+import suwayomi.tachidesk.server.model.table.UserAccountTable
 import suwayomi.tachidesk.server.serverConfig
 import suwayomi.tachidesk.server.util.WebInterfaceManager
 import java.util.concurrent.CompletableFuture
@@ -24,6 +27,11 @@ class InfoQuery {
         val github: String,
         val discord: String,
     )
+
+    fun needsSetup(): Boolean =
+        transaction {
+            UserAccountTable.selectAll().count() == 0L
+        }
 
     fun aboutServer(): AboutServerPayload =
         AboutServerPayload(

@@ -15,20 +15,24 @@ import suwayomi.tachidesk.manga.model.dataclass.IncludeOrExclude
 
 object CategoryTable : IntIdTable() {
     val name = varchar("name", 64)
+    val userId = integer("user_id").nullable()
     val order = integer("sort_order").default(0)
     val isDefault = bool("is_default").default(false)
     val includeInUpdate = integer("include_in_update").default(IncludeOrExclude.UNSET.value)
     val includeInDownload = integer("include_in_download").default(IncludeOrExclude.UNSET.value)
 }
 
-fun CategoryTable.toDataClass(categoryEntry: ResultRow) =
+fun CategoryTable.toDataClass(
+    categoryEntry: ResultRow,
+    userId: Int? = null,
+) =
     CategoryDataClass(
         categoryEntry[id].value,
         categoryEntry[order],
         categoryEntry[name],
         categoryEntry[isDefault],
-        Category.getCategorySize(categoryEntry[id].value),
+        Category.getCategorySize(categoryEntry[id].value, userId),
         IncludeOrExclude.fromValue(categoryEntry[includeInUpdate]),
         IncludeOrExclude.fromValue(categoryEntry[includeInDownload]),
-        Category.getCategoryMetaMap(categoryEntry[id].value),
+        Category.getCategoryMetaMap(categoryEntry[id].value, userId),
     )

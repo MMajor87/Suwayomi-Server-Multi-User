@@ -3,16 +3,23 @@ package suwayomi.tachidesk.manga.controller
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.javalin.http.HttpStatus
 import io.javalin.websocket.WsConfig
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
+import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.transactions.transaction
 import suwayomi.tachidesk.manga.impl.Category
 import suwayomi.tachidesk.manga.impl.Chapter
+import suwayomi.tachidesk.manga.impl.Library
 import suwayomi.tachidesk.manga.impl.update.IUpdater
 import suwayomi.tachidesk.manga.impl.update.UpdateStatus
 import suwayomi.tachidesk.manga.impl.update.UpdaterSocket
 import suwayomi.tachidesk.manga.model.dataclass.MangaChapterDataClass
 import suwayomi.tachidesk.manga.model.dataclass.PaginatedList
+import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.manga.model.table.toDataClass
 import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.JavalinSetup.future
 import suwayomi.tachidesk.server.JavalinSetup.getAttribute
+import suwayomi.tachidesk.server.user.ForbiddenException
 import suwayomi.tachidesk.server.user.requireUser
 import suwayomi.tachidesk.server.util.formParam
 import suwayomi.tachidesk.server.util.handler
@@ -42,10 +49,10 @@ object UpdateController {
                 }
             },
             behaviorOf = { ctx, pageNum ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 ctx.future {
                     future {
-                        Chapter.getRecentChapters(pageNum)
+                        Chapter.getRecentChapters(pageNum, userId)
                     }.thenApply { ctx.json(it) }
                 }
             },
@@ -70,27 +77,44 @@ object UpdateController {
                 }
             },
             behaviorOf = { ctx, categoryId ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 val updater = Injekt.get<IUpdater>()
-                if (categoryId == null) {
-                    logger.info { "Adding Library to Update Queue" }
-                    updater.addCategoriesToUpdateQueue(
-                        Category.getCategoryList(),
-                        clear = true,
-                        forceAll = false,
-                    )
-                } else {
-                    val category = Category.getCategoryById(categoryId)
-                    if (category != null) {
+                if (Library.isAdmin(userId)) {
+                    if (categoryId == null) {
+                        logger.info { "Adding Library to Update Queue" }
                         updater.addCategoriesToUpdateQueue(
-                            listOf(category),
+                            Category.getCategoryList(userId),
                             clear = true,
-                            forceAll = true,
+                            forceAll = false,
                         )
                     } else {
-                        logger.info { "No Category found" }
-                        ctx.status(HttpStatus.BAD_REQUEST)
+                        val category = Category.getCategoryById(categoryId, userId)
+                        if (category != null) {
+                            updater.addCategoriesToUpdateQueue(
+                                listOf(category),
+                                clear = true,
+                                forceAll = true,
+                            )
+                        } else {
+                            logger.info { "No Category found" }
+                            ctx.status(HttpStatus.BAD_REQUEST)
+                        }
                     }
+                } else {
+                    val scopedMangaIds =
+                        Library.getLibraryMangaIdsForUserCategories(
+                            userId = userId,
+                            categoryIds = categoryId?.let { listOf(it) },
+                        )
+                    val scopedMangas =
+                        transaction {
+                            MangaTable
+                                .selectAll()
+                                .where { MangaTable.id inList scopedMangaIds }
+                                .map { MangaTable.toDataClass(it) }
+                        }
+
+                    updater.addMangasToQueue(scopedMangas)
                 }
             },
             withResults = {
@@ -101,8 +125,8 @@ object UpdateController {
 
     fun categoryUpdateWS(ws: WsConfig) {
         ws.onConnect { ctx ->
-            ctx.getAttribute(Attribute.TachideskUser).requireUser()
-            UpdaterSocket.addClient(ctx)
+            val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+            UpdaterSocket.addClient(ctx, userId)
         }
         ws.onMessage { ctx ->
             UpdaterSocket.handleRequest(ctx)
@@ -121,9 +145,9 @@ object UpdateController {
                 }
             },
             behaviorOf = { ctx ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
                 val updater = Injekt.get<IUpdater>()
-                ctx.json(updater.statusDeprecated.value)
+                ctx.json(Library.filterUpdateStatusForUser(userId, updater.statusDeprecated.value))
             },
             withResults = {
                 json<UpdateStatus>(HttpStatus.OK)
@@ -139,7 +163,10 @@ object UpdateController {
                 }
             },
             behaviorOf = { ctx ->
-                ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                val userId = ctx.getAttribute(Attribute.TachideskUser).requireUser()
+                if (!Library.isAdmin(userId)) {
+                    throw ForbiddenException()
+                }
                 val updater = Injekt.get<IUpdater>()
                 logger.info { "Resetting Updater" }
                 ctx.future {

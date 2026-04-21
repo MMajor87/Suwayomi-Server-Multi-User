@@ -21,3 +21,11 @@ scripts/zulu*
 scripts/electron-*
 scripts/rcedit-*
 scripts/resources/*.so
+
+# Claude Code memory and local debug artifacts
+.claude/
+*.log
+fresh-cookies.txt
+fresh2-*.txt
+login-post.out
+root-pre.out

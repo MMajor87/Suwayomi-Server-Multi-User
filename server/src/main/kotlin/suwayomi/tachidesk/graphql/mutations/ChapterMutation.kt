@@ -1,9 +1,9 @@
 package suwayomi.tachidesk.graphql.mutations
 
 import graphql.execution.DataFetcherResult
+import graphql.schema.DataFetchingEnvironment
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
-import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.LikePattern
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -13,11 +13,10 @@ import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.or
 import org.jetbrains.exposed.sql.selectAll
-import org.jetbrains.exposed.sql.statements.BatchUpdateStatement
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.update
 import suwayomi.tachidesk.graphql.asDataFetcherResult
 import suwayomi.tachidesk.graphql.directives.RequireAuth
+import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.graphql.types.ChapterMetaType
 import suwayomi.tachidesk.graphql.types.ChapterType
 import suwayomi.tachidesk.graphql.types.MetaInput
@@ -27,9 +26,10 @@ import suwayomi.tachidesk.manga.impl.chapter.getChapterDownloadReadyById
 import suwayomi.tachidesk.manga.impl.sync.KoreaderSyncService
 import suwayomi.tachidesk.manga.model.table.ChapterMetaTable
 import suwayomi.tachidesk.manga.model.table.ChapterTable
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.JavalinSetup.future
+import suwayomi.tachidesk.server.user.requireUser
 import java.net.URLEncoder
-import java.time.Instant
 import java.util.concurrent.CompletableFuture
 
 /**
@@ -69,66 +69,51 @@ class ChapterMutation {
     private fun updateChapters(
         ids: List<Int>,
         patch: UpdateChapterPatch,
+        userId: Int,
     ) {
         if (ids.isEmpty()) {
             return
         }
 
-        transaction {
-            val chapterIdToPageCount =
-                if (patch.lastPageRead != null) {
-                    ChapterTable
-                        .select(ChapterTable.id, ChapterTable.pageCount)
-                        .where { ChapterTable.id inList ids }
-                        .associateBy(
-                            { it[ChapterTable.id].value },
-                            { it[ChapterTable.pageCount] },
-                        )
-                } else {
-                    emptyMap()
-                }
-            if (patch.isRead != null || patch.isBookmarked != null || patch.lastPageRead != null) {
-                val now = Instant.now().epochSecond
-
-                BatchUpdateStatement(ChapterTable).apply {
-                    ids.forEach { chapterId ->
-                        addBatch(EntityID(chapterId, ChapterTable))
-                        patch.isRead?.also {
-                            this[ChapterTable.isRead] = it
-                        }
-                        patch.isBookmarked?.also {
-                            this[ChapterTable.isBookmarked] = it
-                        }
-                        patch.lastPageRead?.also {
-                            this[ChapterTable.lastPageRead] = it.coerceAtMost(chapterIdToPageCount[chapterId] ?: 0).coerceAtLeast(0)
-                            this[ChapterTable.lastReadAt] = now
-                        }
-                    }
-                    execute(this@transaction)
-                }
-            }
-        }
+        Chapter.modifyChapters(
+            input =
+                Chapter.MangaChapterBatchEditInput(
+                    chapterIds = ids,
+                    chapterIndexes = null,
+                    change =
+                        Chapter.ChapterChange(
+                            isRead = patch.isRead,
+                            isBookmarked = patch.isBookmarked,
+                            lastPageRead = patch.lastPageRead,
+                        ),
+                ),
+            userId = userId,
+        )
 
         // Sync with KoreaderSync when progress is updated
         if (patch.lastPageRead != null || patch.isRead == true) {
             GlobalScope.launch {
                 ids.forEach { chapterId ->
-                    KoreaderSyncService.pushProgress(chapterId)
+                    KoreaderSyncService.pushProgress(chapterId, userId)
                 }
             }
         }
     }
 
     @RequireAuth
-    fun updateChapter(input: UpdateChapterInput): DataFetcherResult<UpdateChapterPayload?> =
+    fun updateChapter(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: UpdateChapterInput,
+    ): DataFetcherResult<UpdateChapterPayload?> =
         asDataFetcherResult {
             val (clientMutationId, id, patch) = input
+            val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
-            updateChapters(listOf(id), patch)
+            updateChapters(listOf(id), patch, userId)
 
             val chapter =
                 transaction {
-                    ChapterType(ChapterTable.selectAll().where { ChapterTable.id eq id }.first())
+                    ChapterType.fromRowForUser(ChapterTable.selectAll().where { ChapterTable.id eq id }.first(), userId)
                 }
 
             UpdateChapterPayload(
@@ -138,15 +123,22 @@ class ChapterMutation {
         }
 
     @RequireAuth
-    fun updateChapters(input: UpdateChaptersInput): DataFetcherResult<UpdateChaptersPayload?> =
+    fun updateChapters(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: UpdateChaptersInput,
+    ): DataFetcherResult<UpdateChaptersPayload?> =
         asDataFetcherResult {
             val (clientMutationId, ids, patch) = input
+            val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
-            updateChapters(ids, patch)
+            updateChapters(ids, patch, userId)
 
             val chapters =
                 transaction {
-                    ChapterTable.selectAll().where { ChapterTable.id inList ids }.map { ChapterType(it) }
+                    ChapterTable
+                        .selectAll()
+                        .where { ChapterTable.id inList ids }
+                        .map { ChapterType.fromRowForUser(it, userId) }
                 }
 
             UpdateChaptersPayload(
@@ -166,21 +158,20 @@ class ChapterMutation {
     )
 
     @RequireAuth
-    fun fetchChapters(input: FetchChaptersInput): CompletableFuture<DataFetcherResult<FetchChaptersPayload?>> {
+    fun fetchChapters(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: FetchChaptersInput,
+    ): CompletableFuture<DataFetcherResult<FetchChaptersPayload?>> {
         val (clientMutationId, mangaId) = input
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
         return future {
             asDataFetcherResult {
                 Chapter.fetchChapterList(mangaId)
 
                 val chapters =
-                    transaction {
-                        ChapterTable
-                            .selectAll()
-                            .where { ChapterTable.manga eq mangaId }
-                            .orderBy(ChapterTable.sourceOrder)
-                            .map { ChapterType(it) }
-                    }
+                    Chapter.getChapterList(mangaId, onlineFetch = false, userId = userId)
+                        .map { chapter -> ChapterType(chapter) }
 
                 FetchChaptersPayload(
                     clientMutationId = clientMutationId,
@@ -223,9 +214,13 @@ class ChapterMutation {
     )
 
     @RequireAuth
-    fun deleteChapterMeta(input: DeleteChapterMetaInput): DataFetcherResult<DeleteChapterMetaPayload?> =
+    fun deleteChapterMeta(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: DeleteChapterMetaInput,
+    ): DataFetcherResult<DeleteChapterMetaPayload?> =
         asDataFetcherResult {
             val (clientMutationId, chapterId, key) = input
+            val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
             val (meta, chapter) =
                 transaction {
@@ -239,7 +234,7 @@ class ChapterMutation {
 
                     val chapter =
                         transaction {
-                            ChapterType(ChapterTable.selectAll().where { ChapterTable.id eq chapterId }.first())
+                            ChapterType.fromRowForUser(ChapterTable.selectAll().where { ChapterTable.id eq chapterId }.first(), userId)
                         }
 
                     if (meta != null) {
@@ -269,9 +264,13 @@ class ChapterMutation {
     )
 
     @RequireAuth
-    fun setChapterMetas(input: SetChapterMetasInput): DataFetcherResult<SetChapterMetasPayload?> =
+    fun setChapterMetas(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: SetChapterMetasInput,
+    ): DataFetcherResult<SetChapterMetasPayload?> =
         asDataFetcherResult {
             val (clientMutationId, items) = input
+            val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
             val metaByChapterId =
                 items
@@ -298,7 +297,7 @@ class ChapterMutation {
                         ChapterTable
                             .selectAll()
                             .where { ChapterTable.id inList allChapterIds }
-                            .map { ChapterType(it) }
+                            .map { ChapterType.fromRowForUser(it, userId) }
                             .distinctBy { it.id }
 
                     updatedMetas to chapters
@@ -325,9 +324,13 @@ class ChapterMutation {
     )
 
     @RequireAuth
-    fun deleteChapterMetas(input: DeleteChapterMetasInput): DataFetcherResult<DeleteChapterMetasPayload?> =
+    fun deleteChapterMetas(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: DeleteChapterMetasInput,
+    ): DataFetcherResult<DeleteChapterMetasPayload?> =
         asDataFetcherResult {
             val (clientMutationId, items) = input
+            val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
             items.forEach { item ->
                 require(!item.keys.isNullOrEmpty() || !item.prefixes.isNullOrEmpty()) {
@@ -377,7 +380,7 @@ class ChapterMutation {
                     ChapterTable
                         .selectAll()
                         .where { ChapterTable.id inList allChapterIds }
-                        .map { ChapterType(it) }
+                        .map { ChapterType.fromRowForUser(it, userId) }
                         .distinctBy { it.id }
                 }
 
@@ -405,14 +408,18 @@ class ChapterMutation {
     )
 
     @RequireAuth
-    fun fetchChapterPages(input: FetchChapterPagesInput): CompletableFuture<DataFetcherResult<FetchChapterPagesPayload?>> {
+    fun fetchChapterPages(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: FetchChapterPagesInput,
+    ): CompletableFuture<DataFetcherResult<FetchChapterPagesPayload?>> {
         val (clientMutationId, chapterId) = input
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
         val paramsMap = input.toParams()
 
         return future {
             asDataFetcherResult {
-                var chapter = getChapterDownloadReadyById(chapterId)
-                val syncResult = KoreaderSyncService.checkAndPullProgress(chapter.id)
+                var chapter = Chapter.withUserState(getChapterDownloadReadyById(chapterId), userId)
+                val syncResult = KoreaderSyncService.checkAndPullProgress(chapter.id, userId)
                 var syncConflictInfo: SyncConflictInfoType? = null
 
                 if (syncResult != null) {
@@ -425,13 +432,12 @@ class ChapterMutation {
                     }
 
                     if (syncResult.shouldUpdate) {
-                        // Update DB for SILENT and RECEIVE
-                        transaction {
-                            ChapterTable.update({ ChapterTable.id eq chapter.id }) {
-                                it[lastPageRead] = syncResult.pageRead
-                                it[lastReadAt] = syncResult.timestamp
-                            }
-                        }
+                        Chapter.setUserProgress(
+                            userId = userId,
+                            chapterId = chapter.id,
+                            lastPageRead = syncResult.pageRead,
+                            lastReadAt = syncResult.timestamp,
+                        )
                     }
                     // For PROMPT, SILENT, and RECEIVE, return the remote progress
                     chapter =

@@ -34,6 +34,7 @@ import suwayomi.tachidesk.opds.dto.OpdsMangaFilter
 import suwayomi.tachidesk.opds.dto.OpdsSearchCriteria
 import suwayomi.tachidesk.opds.dto.PrimaryFilterType
 import suwayomi.tachidesk.server.serverConfig
+import suwayomi.tachidesk.server.model.table.UserMangaLibraryTable
 
 /**
  * Repository for fetching manga data tailored for OPDS feeds.
@@ -71,6 +72,7 @@ object MangaRepository {
      * @return An [OpdsLibraryFeedResult] containing the list of manga, total count, and the specific filter name.
      */
     fun getLibraryManga(
+        userId: Int,
         pageNum: Int,
         sort: String?,
         filter: String?,
@@ -84,10 +86,25 @@ object MangaRepository {
             val query =
                 MangaTable
                     .join(SourceTable, JoinType.INNER, MangaTable.sourceReference, SourceTable.id)
+                    .join(
+                        UserMangaLibraryTable,
+                        JoinType.INNER,
+                        additionalConstraint = {
+                            (UserMangaLibraryTable.mangaId eq MangaTable.id) and
+                                (UserMangaLibraryTable.userId eq userId)
+                        },
+                    )
                     .join(ChapterTable, JoinType.LEFT, MangaTable.id, ChapterTable.manga)
-                    .join(CategoryMangaTable, JoinType.LEFT, MangaTable.id, CategoryMangaTable.manga)
+                    .join(
+                        CategoryMangaTable,
+                        JoinType.LEFT,
+                        additionalConstraint = {
+                            (CategoryMangaTable.manga eq MangaTable.id) and
+                                (CategoryMangaTable.userId eq userId)
+                        },
+                    )
                     .select(MangaTable.columns + SourceTable.lang + SourceTable.name + unreadCount)
-                    .where { MangaTable.inLibrary eq true }
+                    .where { UserMangaLibraryTable.userId eq userId }
                     .groupBy(MangaTable.id, SourceTable.lang, SourceTable.name)
 
             // Apply specific filters from criteria
@@ -122,7 +139,10 @@ object MangaRepository {
                         criteria.categoryId?.let {
                             CategoryTable
                                 .select(CategoryTable.name)
-                                .where { CategoryTable.id eq it }
+                                .where {
+                                    (CategoryTable.id eq it) and
+                                        ((CategoryTable.userId eq userId) or (CategoryTable.id eq 0))
+                                }
                                 .firstOrNull()
                                 ?.get(CategoryTable.name)
                         }
@@ -197,10 +217,12 @@ object MangaRepository {
      * @param criteria The search criteria.
      * @return A pair containing the list of matching [OpdsMangaAcqEntry] and the total count.
      */
-    fun findMangaByCriteria(criteria: OpdsSearchCriteria): Pair<List<OpdsMangaAcqEntry>, Long> =
+    fun findMangaByCriteria(
+        criteria: OpdsSearchCriteria,
+        userId: Int,
+    ): Pair<List<OpdsMangaAcqEntry>, Long> =
         transaction {
             val conditions = mutableListOf<Op<Boolean>>()
-            conditions += (MangaTable.inLibrary eq true)
 
             criteria.query?.takeIf { it.isNotBlank() }?.let { q ->
                 val lowerQ = q.lowercase()
@@ -222,6 +244,14 @@ object MangaRepository {
             val query =
                 MangaTable
                     .join(SourceTable, JoinType.INNER, MangaTable.sourceReference, SourceTable.id)
+                    .join(
+                        UserMangaLibraryTable,
+                        JoinType.INNER,
+                        additionalConstraint = {
+                            (UserMangaLibraryTable.mangaId eq MangaTable.id) and
+                                (UserMangaLibraryTable.userId eq userId)
+                        },
+                    )
                     .select(MangaTable.columns + SourceTable.name + SourceTable.lang)
                     .where(finalCondition)
                     .groupBy(MangaTable.id, SourceTable.name, SourceTable.lang)

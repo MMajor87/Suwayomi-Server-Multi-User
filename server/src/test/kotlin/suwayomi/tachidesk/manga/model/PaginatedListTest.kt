@@ -19,20 +19,14 @@ class PaginatedListTest : ApplicationTest() {
     fun `empty list`() {
         val paginated = paginatedFrom(0) { listIndicesOf(0, 0) }
 
-        assertEquals(
-            PaginatedList(emptyList<Int>(), false),
-            paginated,
-        )
+        assertPaginated(paginated, emptyList(), false)
     }
 
     @Test
     fun `size smaller than PaginationFactor`() {
         val paginated = paginatedFrom(0) { listIndicesOf(0, PAGINATION_FACTOR - 1) }
 
-        assertEquals(
-            PaginatedList(listIndicesOf(0, PAGINATION_FACTOR - 1), false),
-            paginated,
-        )
+        assertPaginated(paginated, listIndicesOf(0, PAGINATION_FACTOR - 1), false)
     }
 
     @Test
@@ -41,17 +35,11 @@ class PaginatedListTest : ApplicationTest() {
 
         val firstPage = paginatedFrom(0, lister = masterLister)
 
-        assertEquals(
-            PaginatedList(listIndicesOf(0, PAGINATION_FACTOR), true),
-            firstPage,
-        )
+        assertPaginated(firstPage, listIndicesOf(0, PAGINATION_FACTOR), true)
 
         val secondPage = paginatedFrom(1, lister = masterLister)
 
-        assertEquals(
-            PaginatedList(listIndicesOf(PAGINATION_FACTOR, PAGINATION_FACTOR * 2 - 1), false),
-            secondPage,
-        )
+        assertPaginated(secondPage, listIndicesOf(PAGINATION_FACTOR, PAGINATION_FACTOR * 2 - 1), false)
     }
 
     @Test
@@ -60,17 +48,11 @@ class PaginatedListTest : ApplicationTest() {
 
         val firstPage = paginatedFrom(0, lister = masterLister)
 
-        assertEquals(
-            PaginatedList(listIndicesOf(0, PAGINATION_FACTOR), true),
-            firstPage,
-        )
+        assertPaginated(firstPage, listIndicesOf(0, PAGINATION_FACTOR), true)
 
         val secondPage = paginatedFrom(1, lister = masterLister)
 
-        assertEquals(
-            PaginatedList(listIndicesOf(PAGINATION_FACTOR, PAGINATION_FACTOR * 2), false),
-            secondPage,
-        )
+        assertPaginated(secondPage, listIndicesOf(PAGINATION_FACTOR, PAGINATION_FACTOR * 2), false)
     }
 
     @Test
@@ -79,28 +61,28 @@ class PaginatedListTest : ApplicationTest() {
 
         val firstPage = paginatedFrom(0, lister = masterLister)
 
-        assertEquals(
-            PaginatedList(listIndicesOf(0, PAGINATION_FACTOR), true),
-            firstPage,
-        )
+        assertPaginated(firstPage, listIndicesOf(0, PAGINATION_FACTOR), true)
 
         val secondPage = paginatedFrom(1, lister = masterLister)
 
-        assertEquals(
-            PaginatedList(listIndicesOf(PAGINATION_FACTOR, PAGINATION_FACTOR * 2), true),
-            secondPage,
-        )
+        assertPaginated(secondPage, listIndicesOf(PAGINATION_FACTOR, PAGINATION_FACTOR * 2), true)
 
         val thirdPage = paginatedFrom(2, lister = masterLister)
 
-        assertEquals(
-            PaginatedList(listIndicesOf(PAGINATION_FACTOR * 2, PAGINATION_FACTOR * 2 + 1), false),
-            thirdPage,
-        )
+        assertPaginated(thirdPage, listIndicesOf(PAGINATION_FACTOR * 2, PAGINATION_FACTOR * 2 + 1), false)
     }
 
     private fun listIndicesOf(
         first: Int,
         last: Int,
     ): List<Int> = (first until last).toList()
+
+    private fun assertPaginated(
+        actual: PaginatedList<Int>,
+        expectedPage: List<Int>,
+        expectedHasNextPage: Boolean,
+    ) {
+        assertEquals(expectedPage, actual.page)
+        assertEquals(expectedHasNextPage, actual.hasNextPage)
+    }
 }

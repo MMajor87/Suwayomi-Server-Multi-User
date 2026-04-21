@@ -106,6 +106,31 @@ class MangaType(
         row[MangaTable.chaptersLastFetchedAt],
     )
 
+    constructor(
+        row: ResultRow,
+        inLibrary: Boolean,
+        inLibraryAt: Long,
+    ) : this(
+        row[MangaTable.id].value,
+        row[MangaTable.sourceReference],
+        row[MangaTable.url],
+        row[MangaTable.title],
+        row[MangaTable.thumbnail_url]?.let { MangaList.proxyThumbnailUrl(row[MangaTable.id].value) },
+        row[MangaTable.thumbnailUrlLastFetched],
+        row[MangaTable.initialized],
+        row[MangaTable.artist],
+        row[MangaTable.author],
+        row[MangaTable.description],
+        row[MangaTable.genre].toGenreList(),
+        MangaStatus.valueOf(row[MangaTable.status]),
+        inLibrary,
+        inLibraryAt,
+        UpdateStrategy.valueOf(row[MangaTable.updateStrategy]),
+        row[MangaTable.realUrl],
+        row[MangaTable.lastFetchedAt],
+        row[MangaTable.chaptersLastFetchedAt],
+    )
+
     constructor(dataClass: MangaDataClass) : this(
         dataClass.id,
         dataClass.sourceId.toLong(),
@@ -121,6 +146,31 @@ class MangaType(
         MangaStatus.valueOf(dataClass.status),
         dataClass.inLibrary,
         dataClass.inLibraryAt,
+        dataClass.updateStrategy,
+        dataClass.realUrl,
+        dataClass.lastFetchedAt,
+        dataClass.chaptersLastFetchedAt,
+    )
+
+    constructor(
+        dataClass: MangaDataClass,
+        inLibrary: Boolean,
+        inLibraryAt: Long,
+    ) : this(
+        dataClass.id,
+        dataClass.sourceId.toLong(),
+        dataClass.url,
+        dataClass.title,
+        dataClass.thumbnailUrl,
+        dataClass.thumbnailUrlLastFetched,
+        dataClass.initialized,
+        dataClass.artist,
+        dataClass.author,
+        dataClass.description,
+        dataClass.genre,
+        MangaStatus.valueOf(dataClass.status),
+        inLibrary,
+        inLibraryAt,
         dataClass.updateStrategy,
         dataClass.realUrl,
         dataClass.lastFetchedAt,

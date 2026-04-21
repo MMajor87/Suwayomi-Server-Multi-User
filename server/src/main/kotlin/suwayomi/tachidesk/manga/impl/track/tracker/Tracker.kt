@@ -10,6 +10,7 @@ import java.io.IOException
 abstract class Tracker(
     val id: Int,
     val name: String,
+    val userId: Int? = null,
 ) {
     val trackPreferences = TrackerPreferences
     private val networkService: NetworkHelper by injectLazy()

@@ -13,58 +13,80 @@ import org.dataloader.DataLoader
 import org.dataloader.DataLoaderFactory
 import org.jetbrains.exposed.sql.Slf4jSqlDebugLogger
 import org.jetbrains.exposed.sql.addLogger
+import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.or
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
+import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.graphql.types.CategoryNodeList
 import suwayomi.tachidesk.graphql.types.CategoryNodeList.Companion.toNodeList
 import suwayomi.tachidesk.graphql.types.CategoryType
 import suwayomi.tachidesk.manga.model.table.CategoryMangaTable
 import suwayomi.tachidesk.manga.model.table.CategoryTable
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.JavalinSetup.future
+import suwayomi.tachidesk.server.user.requireUser
 
 class CategoryDataLoader : KotlinDataLoader<Int, CategoryType> {
     override val dataLoaderName = "CategoryDataLoader"
 
-    override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<Int, CategoryType> =
-        DataLoaderFactory.newDataLoader { ids ->
+    override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<Int, CategoryType> {
+        val userId by lazy { graphQLContext.getAttribute(Attribute.TachideskUser).requireUser() }
+
+        return DataLoaderFactory.newDataLoader { ids ->
             future {
                 transaction {
                     addLogger(Slf4jSqlDebugLogger)
                     val categories =
                         CategoryTable
                             .selectAll()
-                            .where { CategoryTable.id inList ids }
+                            .where {
+                                (CategoryTable.id inList ids) and
+                                    ((CategoryTable.userId eq userId) or (CategoryTable.id eq 0))
+                            }
                             .map { CategoryType(it) }
                             .associateBy { it.id }
                     ids.map { categories[it] }
                 }
             }
         }
+    }
 }
 
 class CategoryForIdsDataLoader : KotlinDataLoader<List<Int>, CategoryNodeList> {
     override val dataLoaderName = "CategoryForIdsDataLoader"
 
-    override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<List<Int>, CategoryNodeList> =
-        DataLoaderFactory.newDataLoader { categoryIds ->
+    override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<List<Int>, CategoryNodeList> {
+        val userId by lazy { graphQLContext.getAttribute(Attribute.TachideskUser).requireUser() }
+
+        return DataLoaderFactory.newDataLoader { categoryIds ->
             future {
                 transaction {
                     addLogger(Slf4jSqlDebugLogger)
                     val ids = categoryIds.flatten().distinct()
-                    val categories = CategoryTable.selectAll().where { CategoryTable.id inList ids }.map { CategoryType(it) }
+                    val categories =
+                        CategoryTable
+                            .selectAll()
+                            .where {
+                                (CategoryTable.id inList ids) and
+                                    ((CategoryTable.userId eq userId) or (CategoryTable.id eq 0))
+                            }.map { CategoryType(it) }
                     categoryIds.map { categoryIds ->
                         categories.filter { it.id in categoryIds }.toNodeList()
                     }
                 }
             }
         }
+    }
 }
 
 class CategoriesForMangaDataLoader : KotlinDataLoader<Int, CategoryNodeList> {
     override val dataLoaderName = "CategoriesForMangaDataLoader"
 
-    override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<Int, CategoryNodeList> =
-        DataLoaderFactory.newDataLoader<Int, CategoryNodeList> { ids ->
+    override fun getDataLoader(graphQLContext: GraphQLContext): DataLoader<Int, CategoryNodeList> {
+        val userId by lazy { graphQLContext.getAttribute(Attribute.TachideskUser).requireUser() }
+
+        return DataLoaderFactory.newDataLoader<Int, CategoryNodeList> { ids ->
             future {
                 transaction {
                     addLogger(Slf4jSqlDebugLogger)
@@ -72,7 +94,10 @@ class CategoriesForMangaDataLoader : KotlinDataLoader<Int, CategoryNodeList> {
                         CategoryMangaTable
                             .innerJoin(CategoryTable)
                             .selectAll()
-                            .where { CategoryMangaTable.manga inList ids }
+                            .where {
+                                (CategoryMangaTable.manga inList ids) and
+                                    (CategoryMangaTable.userId eq userId)
+                            }
                             .map { Pair(it[CategoryMangaTable.manga].value, CategoryType(it)) }
                             .groupBy { it.first }
                             .mapValues { it.value.map { pair -> pair.second } }
@@ -80,4 +105,6 @@ class CategoriesForMangaDataLoader : KotlinDataLoader<Int, CategoryNodeList> {
                 }
             }
         }
+    }
 }
+

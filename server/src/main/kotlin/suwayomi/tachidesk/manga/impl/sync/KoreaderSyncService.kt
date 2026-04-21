@@ -16,6 +16,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
+import org.jetbrains.exposed.sql.and
 import suwayomi.tachidesk.graphql.types.KoSyncStatusPayload
 import suwayomi.tachidesk.graphql.types.KoreaderSyncChecksumMethod
 import suwayomi.tachidesk.graphql.types.KoreaderSyncConflictStrategy
@@ -23,6 +24,7 @@ import suwayomi.tachidesk.manga.impl.ChapterDownloadHelper
 import suwayomi.tachidesk.manga.impl.util.KoreaderHelper
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.server.model.table.UserChapterTable
 import suwayomi.tachidesk.server.serverConfig
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -328,7 +330,10 @@ object KoreaderSyncService {
         }
     }
 
-    suspend fun pushProgress(chapterId: Int) {
+    suspend fun pushProgress(
+        chapterId: Int,
+        userId: Int? = null,
+    ) {
         val forwardStrategy = serverConfig.koreaderSyncStrategyForward.value
         val backwardStrategy = serverConfig.koreaderSyncStrategyBackward.value
 
@@ -350,14 +355,33 @@ object KoreaderSyncService {
 
         val chapterInfo =
             transaction {
+                val chapterRow =
+                    ChapterTable
+                        .select(ChapterTable.pageCount, ChapterTable.lastPageRead)
+                        .where { ChapterTable.id eq chapterId }
+                        .firstOrNull() ?: return@transaction null
+
+                val userLastPageRead =
+                    if (userId == null) {
+                        chapterRow[ChapterTable.lastPageRead]
+                    } else {
+                        UserChapterTable
+                            .select(UserChapterTable.lastPageRead)
+                            .where {
+                                (UserChapterTable.userId eq userId) and
+                                    (UserChapterTable.chapterId eq chapterId)
+                            }.firstOrNull()
+                            ?.get(UserChapterTable.lastPageRead) ?: 0
+                    }
+
                 ChapterTable
-                    .select(ChapterTable.lastPageRead, ChapterTable.pageCount)
+                    .select(ChapterTable.id)
                     .where { ChapterTable.id eq chapterId }
                     .firstOrNull()
                     ?.let {
                         object {
-                            val lastPageRead = it[ChapterTable.lastPageRead]
-                            val pageCount = it[ChapterTable.pageCount]
+                            val lastPageRead = userLastPageRead
+                            val pageCount = chapterRow[ChapterTable.pageCount]
                         }
                     }
             } ?: return
@@ -402,7 +426,10 @@ object KoreaderSyncService {
         }
     }
 
-    suspend fun checkAndPullProgress(chapterId: Int): SyncResult? {
+    suspend fun checkAndPullProgress(
+        chapterId: Int,
+        userId: Int? = null,
+    ): SyncResult? {
         val forwardStrategy = serverConfig.koreaderSyncStrategyForward.value
         val backwardStrategy = serverConfig.koreaderSyncStrategyBackward.value
 
@@ -444,15 +471,46 @@ object KoreaderSyncService {
 
                     val localProgress =
                         transaction {
+                            val chapterRow =
+                                ChapterTable
+                                    .select(ChapterTable.lastReadAt, ChapterTable.lastPageRead, ChapterTable.pageCount)
+                                    .where { ChapterTable.id eq chapterId }
+                                    .firstOrNull() ?: return@transaction null
+
+                            val userProgressRow =
+                                if (userId == null) {
+                                    null
+                                } else {
+                                    UserChapterTable
+                                        .select(UserChapterTable.lastReadAt, UserChapterTable.lastPageRead)
+                                        .where {
+                                            (UserChapterTable.userId eq userId) and
+                                                (UserChapterTable.chapterId eq chapterId)
+                                        }.firstOrNull()
+                                }
+
+                            val lastReadAt =
+                                if (userId == null) {
+                                    chapterRow[ChapterTable.lastReadAt]
+                                } else {
+                                    userProgressRow?.get(UserChapterTable.lastReadAt) ?: 0
+                                }
+                            val lastPageRead =
+                                if (userId == null) {
+                                    chapterRow[ChapterTable.lastPageRead]
+                                } else {
+                                    userProgressRow?.get(UserChapterTable.lastPageRead) ?: 0
+                                }
+
                             ChapterTable
-                                .select(ChapterTable.lastReadAt, ChapterTable.lastPageRead, ChapterTable.pageCount)
+                                .select(ChapterTable.id)
                                 .where { ChapterTable.id eq chapterId }
                                 .firstOrNull()
                                 ?.let {
                                     object {
-                                        val lastReadAt = it[ChapterTable.lastReadAt]
-                                        val lastPageRead = it[ChapterTable.lastPageRead]
-                                        val pageCount = it[ChapterTable.pageCount]
+                                        val lastReadAt = lastReadAt
+                                        val lastPageRead = lastPageRead
+                                        val pageCount = chapterRow[ChapterTable.pageCount]
                                     }
                                 }
                         }

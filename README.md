@@ -46,6 +46,23 @@ Suwayomi-Server is as multi-platform as you can get. Any platform that runs java
 
 You can use Mihon (Tachiyomi) to access your Suwayomi-Server. For more info look [here](#syncing-with-mihon-tachiyomi-and-neko).
 
+## Multi-User Mode
+
+> [!NOTE]
+> This branch adds multi-user support. Each user has an isolated library, reading progress, categories, and tracker records.
+
+### First-Run Setup
+On a fresh database, navigate to **`http://localhost:4567/setup.html`** to create the initial admin account before logging in.
+
+### Admin Panel
+User management (create/edit/deactivate/delete users) is available at:
+
+**`http://localhost:4567/admin/users.html`**
+
+This is a standalone server-rendered page — it is not accessible from the main WebUI's Settings menu. Bookmark the URL or share it with administrators directly. Only accounts with the `ADMIN` role can access it; non-admins are denied and unauthenticated users are redirected to the login page.
+
+---
+
 ## Features
 > [!NOTE]
 >

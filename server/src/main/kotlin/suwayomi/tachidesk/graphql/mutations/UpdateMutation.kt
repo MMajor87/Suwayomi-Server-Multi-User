@@ -1,15 +1,26 @@
 package suwayomi.tachidesk.graphql.mutations
 
 import graphql.execution.DataFetcherResult
+import graphql.schema.DataFetchingEnvironment
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
+import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.transactions.transaction
 import suwayomi.tachidesk.graphql.asDataFetcherResult
 import suwayomi.tachidesk.graphql.directives.RequireAuth
+import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.graphql.types.LibraryUpdateStatus
 import suwayomi.tachidesk.graphql.types.UpdateStatus
 import suwayomi.tachidesk.manga.impl.Category
+import suwayomi.tachidesk.manga.impl.Library
 import suwayomi.tachidesk.manga.impl.update.IUpdater
+import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.manga.model.table.toDataClass
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.JavalinSetup.future
+import suwayomi.tachidesk.server.user.ForbiddenException
+import suwayomi.tachidesk.server.user.requireUser
 import uy.kohesive.injekt.injectLazy
 import java.util.concurrent.CompletableFuture
 import kotlin.time.Duration.Companion.seconds
@@ -28,12 +39,29 @@ class UpdateMutation {
     )
 
     @RequireAuth
-    fun updateLibrary(input: UpdateLibraryInput): CompletableFuture<DataFetcherResult<UpdateLibraryPayload?>> {
-        updater.addCategoriesToUpdateQueue(
-            Category.getCategoryList().filter { input.categories?.contains(it.id) ?: true },
-            clear = true,
-            forceAll = !input.categories.isNullOrEmpty(),
-        )
+    fun updateLibrary(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: UpdateLibraryInput,
+    ): CompletableFuture<DataFetcherResult<UpdateLibraryPayload?>> {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
+
+        if (Library.isAdmin(userId)) {
+            updater.addCategoriesToUpdateQueue(
+                Category.getCategoryList(userId).filter { input.categories?.contains(it.id) ?: true },
+                clear = true,
+                forceAll = !input.categories.isNullOrEmpty(),
+            )
+        } else {
+            val scopedMangaIds = Library.getLibraryMangaIdsForUserCategories(userId, input.categories)
+            val scopedMangas =
+                transaction {
+                    MangaTable
+                        .selectAll()
+                        .where { MangaTable.id inList scopedMangaIds }
+                        .map { MangaTable.toDataClass(it) }
+                }
+            updater.addMangasToQueue(scopedMangas)
+        }
 
         return future {
             asDataFetcherResult {
@@ -42,7 +70,7 @@ class UpdateMutation {
                     updateStatus =
                         withTimeout(30.seconds) {
                             LibraryUpdateStatus(
-                                updater.updates.first(),
+                                Library.filterUpdateUpdatesForUser(userId, updater.updates.first()),
                             )
                         },
                 )
@@ -60,13 +88,18 @@ class UpdateMutation {
     )
 
     @RequireAuth
-    fun updateLibraryManga(input: UpdateLibraryMangaInput): CompletableFuture<DataFetcherResult<UpdateLibraryMangaPayload?>> {
+    fun updateLibraryManga(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: UpdateLibraryMangaInput,
+    ): CompletableFuture<DataFetcherResult<UpdateLibraryMangaPayload?>> {
         updateLibrary(
+            dataFetchingEnvironment,
             UpdateLibraryInput(
                 clientMutationId = input.clientMutationId,
                 categories = null,
             ),
         )
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
         return future {
             asDataFetcherResult {
@@ -74,7 +107,7 @@ class UpdateMutation {
                     input.clientMutationId,
                     updateStatus =
                         withTimeout(30.seconds) {
-                            UpdateStatus(updater.status.first())
+                            UpdateStatus(Library.filterUpdateStatusForUser(userId, updater.status.first()))
                         },
                 )
             }
@@ -92,13 +125,18 @@ class UpdateMutation {
     )
 
     @RequireAuth
-    fun updateCategoryManga(input: UpdateCategoryMangaInput): CompletableFuture<DataFetcherResult<UpdateCategoryMangaPayload?>> {
+    fun updateCategoryManga(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: UpdateCategoryMangaInput,
+    ): CompletableFuture<DataFetcherResult<UpdateCategoryMangaPayload?>> {
         updateLibrary(
+            dataFetchingEnvironment,
             UpdateLibraryInput(
                 clientMutationId = input.clientMutationId,
                 categories = input.categories,
             ),
         )
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
         return future {
             asDataFetcherResult {
@@ -106,7 +144,7 @@ class UpdateMutation {
                     input.clientMutationId,
                     updateStatus =
                         withTimeout(30.seconds) {
-                            UpdateStatus(updater.status.first())
+                            UpdateStatus(Library.filterUpdateStatusForUser(userId, updater.status.first()))
                         },
                 )
             }
@@ -122,7 +160,14 @@ class UpdateMutation {
     )
 
     @RequireAuth
-    fun updateStop(input: UpdateStopInput): UpdateStopPayload {
+    fun updateStop(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: UpdateStopInput,
+    ): UpdateStopPayload {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
+        if (!Library.isAdmin(userId)) {
+            throw ForbiddenException()
+        }
         updater.reset()
         return UpdateStopPayload(input.clientMutationId)
     }

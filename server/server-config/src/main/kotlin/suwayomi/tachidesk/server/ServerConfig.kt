@@ -1016,6 +1016,26 @@ class ServerConfig(
         description = "Use Hikari Connection Pool to connect to the database.",
     )
 
+    val multiUserBootstrapEnabled: MutableStateFlow<Boolean> by BooleanSetting(
+        protoNumber = 86,
+        group = SettingGroup.AUTH,
+        privacySafe = true,
+        defaultValue = true,
+        description = "Enable startup multi-user bootstrap gate",
+        excludeFromBackup = true,
+    )
+
+    val authModeNoneMigrationTarget: MutableStateFlow<AuthMode> by EnumSetting(
+        protoNumber = 87,
+        group = SettingGroup.AUTH,
+        privacySafe = true,
+        defaultValue = AuthMode.UI_LOGIN,
+        enumClass = AuthMode::class,
+        typeInfo = SettingsRegistry.PartialTypeInfo(imports = listOf("suwayomi.tachidesk.graphql.types.AuthMode")),
+        excludeFromBackup = true,
+        description = "Startup replacement for authMode NONE (safe values: UI_LOGIN, SIMPLE_LOGIN)",
+    )
+
 
 
     /** ****************************************************************** **/

@@ -1,6 +1,7 @@
 package suwayomi.tachidesk.graphql.mutations
 
 import graphql.execution.DataFetcherResult
+import graphql.schema.DataFetchingEnvironment
 import org.jetbrains.exposed.sql.LikePattern
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -14,6 +15,7 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
 import suwayomi.tachidesk.graphql.asDataFetcherResult
 import suwayomi.tachidesk.graphql.directives.RequireAuth
+import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.graphql.types.MangaMetaType
 import suwayomi.tachidesk.graphql.types.MangaType
 import suwayomi.tachidesk.graphql.types.MetaInput
@@ -23,9 +25,10 @@ import suwayomi.tachidesk.manga.impl.update.IUpdater
 import suwayomi.tachidesk.manga.model.table.MangaMetaTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.toDataClass
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.JavalinSetup.future
+import suwayomi.tachidesk.server.user.requireUser
 import uy.kohesive.injekt.injectLazy
-import java.time.Instant
 import java.util.concurrent.CompletableFuture
 
 /**
@@ -63,51 +66,53 @@ class MangaMutation {
     )
 
     private suspend fun updateMangas(
+        userId: Int,
         ids: List<Int>,
         patch: UpdateMangaPatch,
     ) {
-        transaction {
-            if (patch.inLibrary != null) {
-                MangaTable.update({ MangaTable.id inList ids }) { update ->
-                    patch.inLibrary.also {
-                        update[inLibrary] = it
-                        if (it) update[inLibraryAt] = Instant.now().epochSecond
-                    }
-                }
-            }
-        }.apply {
-            if (patch.inLibrary != null) {
+        if (patch.inLibrary == null) {
+            return
+        }
+
+        if (patch.inLibrary) {
+            Library.addMangasToLibrary(userId, ids)
+        } else {
+            Library.removeMangasFromLibrary(userId, ids)
+        }
+
+        if (patch.inLibrary) {
+            // try to initialize uninitialized in library manga to ensure that the expected data is available (chapter list, metadata, ...)
+            val mangas =
                 transaction {
-                    // try to initialize uninitialized in library manga to ensure that the expected data is available (chapter list, metadata, ...)
-                    val mangas =
-                        transaction {
-                            MangaTable
-                                .selectAll()
-                                .where { (MangaTable.id inList ids) and (MangaTable.initialized eq false) }
-                                .map { MangaTable.toDataClass(it) }
-                        }
-
-                    updater.addMangasToQueue(mangas)
+                    MangaTable
+                        .selectAll()
+                        .where { (MangaTable.id inList ids) and (MangaTable.initialized eq false) }
+                        .map { MangaTable.toDataClass(it) }
                 }
 
-                ids.forEach {
-                    Library.handleMangaThumbnail(it, patch.inLibrary)
-                }
-            }
+            updater.addMangasToQueue(mangas)
         }
     }
 
     @RequireAuth
-    fun updateManga(input: UpdateMangaInput): CompletableFuture<DataFetcherResult<UpdateMangaPayload?>> {
+    fun updateManga(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: UpdateMangaInput,
+    ): CompletableFuture<DataFetcherResult<UpdateMangaPayload?>> {
         val (clientMutationId, id, patch) = input
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
         return future {
             asDataFetcherResult {
-                updateMangas(listOf(id), patch)
+                updateMangas(userId, listOf(id), patch)
+                val libraryEntries = Library.getUserLibraryEntryMap(userId, setOf(id))
 
                 val manga =
                     transaction {
-                        MangaType(MangaTable.selectAll().where { MangaTable.id eq id }.first())
+                        MangaTable.selectAll().where { MangaTable.id eq id }.first().let { row ->
+                            val inLibraryAt = libraryEntries[id]
+                            MangaType(row, inLibrary = inLibraryAt != null, inLibraryAt = inLibraryAt ?: 0L)
+                        }
                     }
 
                 UpdateMangaPayload(
@@ -119,16 +124,26 @@ class MangaMutation {
     }
 
     @RequireAuth
-    fun updateMangas(input: UpdateMangasInput): CompletableFuture<DataFetcherResult<UpdateMangasPayload?>> {
+    fun updateMangas(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: UpdateMangasInput,
+    ): CompletableFuture<DataFetcherResult<UpdateMangasPayload?>> {
         val (clientMutationId, ids, patch) = input
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
         return future {
             asDataFetcherResult {
-                updateMangas(ids, patch)
+                updateMangas(userId, ids, patch)
 
                 val mangas =
                     transaction {
-                        MangaTable.selectAll().where { MangaTable.id inList ids }.map { MangaType(it) }
+                        val rows = MangaTable.selectAll().where { MangaTable.id inList ids }.toList()
+                        val libraryEntries = Library.getUserLibraryEntryMap(userId, ids)
+                        rows.map { row ->
+                            val mangaId = row[MangaTable.id].value
+                            val inLibraryAt = libraryEntries[mangaId]
+                            MangaType(row, inLibrary = inLibraryAt != null, inLibraryAt = inLibraryAt ?: 0L)
+                        }
                     }
 
                 UpdateMangasPayload(
@@ -150,20 +165,28 @@ class MangaMutation {
     )
 
     @RequireAuth
-    fun fetchManga(input: FetchMangaInput): CompletableFuture<DataFetcherResult<FetchMangaPayload?>> {
+    fun fetchManga(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: FetchMangaInput,
+    ): CompletableFuture<DataFetcherResult<FetchMangaPayload?>> {
         val (clientMutationId, id) = input
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
         return future {
             asDataFetcherResult {
                 Manga.fetchManga(id)
+                val libraryEntries = Library.getUserLibraryEntryMap(userId, setOf(id))
 
                 val manga =
                     transaction {
-                        MangaTable.selectAll().where { MangaTable.id eq id }.first()
+                        MangaTable.selectAll().where { MangaTable.id eq id }.first().let { row ->
+                            val inLibraryAt = libraryEntries[id]
+                            MangaType(row, inLibrary = inLibraryAt != null, inLibraryAt = inLibraryAt ?: 0L)
+                        }
                     }
                 FetchMangaPayload(
                     clientMutationId = clientMutationId,
-                    manga = MangaType(manga),
+                    manga = manga,
                 )
             }
         }
@@ -203,10 +226,15 @@ class MangaMutation {
     )
 
     @RequireAuth
-    fun deleteMangaMeta(input: DeleteMangaMetaInput): DataFetcherResult<DeleteMangaMetaPayload?> {
+    fun deleteMangaMeta(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: DeleteMangaMetaInput,
+    ): DataFetcherResult<DeleteMangaMetaPayload?> {
         val (clientMutationId, mangaId, key) = input
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
         return asDataFetcherResult {
+            val libraryEntries = Library.getUserLibraryEntryMap(userId, setOf(mangaId))
             val (meta, manga) =
                 transaction {
                     val meta =
@@ -218,8 +246,9 @@ class MangaMutation {
                     MangaMetaTable.deleteWhere { (MangaMetaTable.ref eq mangaId) and (MangaMetaTable.key eq key) }
 
                     val manga =
-                        transaction {
-                            MangaType(MangaTable.selectAll().where { MangaTable.id eq mangaId }.first())
+                        MangaTable.selectAll().where { MangaTable.id eq mangaId }.first().let { row ->
+                            val inLibraryAt = libraryEntries[mangaId]
+                            MangaType(row, inLibrary = inLibraryAt != null, inLibraryAt = inLibraryAt ?: 0L)
                         }
 
                     if (meta != null) {
@@ -250,8 +279,12 @@ class MangaMutation {
     )
 
     @RequireAuth
-    fun setMangaMetas(input: SetMangaMetasInput): DataFetcherResult<SetMangaMetasPayload?> {
+    fun setMangaMetas(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: SetMangaMetasInput,
+    ): DataFetcherResult<SetMangaMetasPayload?> {
         val (clientMutationId, items) = input
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
         return asDataFetcherResult {
             val metaByMangaId =
@@ -266,6 +299,7 @@ class MangaMutation {
 
             val allMangaIds = metaByMangaId.keys
             val allMetaKeys = metaByMangaId.values.flatMap { it.keys }.distinct()
+            val libraryEntries = Library.getUserLibraryEntryMap(userId, allMangaIds)
 
             val (updatedMetas, mangas) =
                 transaction {
@@ -279,7 +313,11 @@ class MangaMutation {
                         MangaTable
                             .selectAll()
                             .where { MangaTable.id inList allMangaIds }
-                            .map { MangaType(it) }
+                            .map { row ->
+                                val mangaId = row[MangaTable.id].value
+                                val inLibraryAt = libraryEntries[mangaId]
+                                MangaType(row, inLibrary = inLibraryAt != null, inLibraryAt = inLibraryAt ?: 0L)
+                            }
                             .distinctBy { it.id }
 
                     updatedMetas to mangas
@@ -307,8 +345,12 @@ class MangaMutation {
     )
 
     @RequireAuth
-    fun deleteMangaMetas(input: DeleteMangaMetasInput): DataFetcherResult<DeleteMangaMetasPayload?> {
+    fun deleteMangaMetas(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: DeleteMangaMetasInput,
+    ): DataFetcherResult<DeleteMangaMetasPayload?> {
         val (clientMutationId, items) = input
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
         return asDataFetcherResult {
             items.forEach { item ->
@@ -356,10 +398,15 @@ class MangaMutation {
 
             val mangas =
                 transaction {
+                    val libraryEntries = Library.getUserLibraryEntryMap(userId, allMangaIds)
                     MangaTable
                         .selectAll()
                         .where { MangaTable.id inList allMangaIds }
-                        .map { MangaType(it) }
+                        .map { row ->
+                            val mangaId = row[MangaTable.id].value
+                            val inLibraryAt = libraryEntries[mangaId]
+                            MangaType(row, inLibrary = inLibraryAt != null, inLibraryAt = inLibraryAt ?: 0L)
+                        }
                         .distinctBy { it.id }
                 }
 

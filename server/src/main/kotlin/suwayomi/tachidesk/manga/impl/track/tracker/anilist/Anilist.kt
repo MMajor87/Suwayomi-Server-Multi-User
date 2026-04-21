@@ -14,7 +14,8 @@ import java.io.IOException
 
 class Anilist(
     id: Int,
-) : Tracker(id, "AniList"),
+    userId: Int? = null,
+) : Tracker(id, "AniList", userId),
     DeletableTracker {
     companion object {
         const val READING = 1

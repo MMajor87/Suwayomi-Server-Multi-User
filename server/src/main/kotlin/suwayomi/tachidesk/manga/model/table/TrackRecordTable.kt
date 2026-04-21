@@ -13,6 +13,7 @@ import suwayomi.tachidesk.manga.model.table.columns.truncatingVarchar
 
 object TrackRecordTable : IntIdTable() {
     val mangaId = reference("manga_id", MangaTable, ReferenceOption.CASCADE)
+    val userId = integer("user_id").nullable()
     val trackerId = integer("sync_id")
     val remoteId = long("remote_id")
     val libraryId = long("library_id").nullable()
@@ -25,4 +26,10 @@ object TrackRecordTable : IntIdTable() {
     val startDate = long("start_date")
     val finishDate = long("finish_date")
     val private = bool("private").default(false)
+
+    init {
+        index(false, userId)
+        index(false, userId, mangaId)
+        uniqueIndex(userId, mangaId, trackerId)
+    }
 }

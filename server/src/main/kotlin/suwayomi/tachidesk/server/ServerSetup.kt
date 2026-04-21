@@ -78,6 +78,9 @@ import kotlin.io.path.div
 import kotlin.math.roundToInt
 
 private val logger = KotlinLogging.logger {}
+private val applicationSetupLock = Any()
+@Volatile
+private var applicationSetupDone = false
 
 class ApplicationDirs(
     val dataRoot: String = ApplicationRootDir,
@@ -227,6 +230,14 @@ fun serverModule(applicationDirs: ApplicationDirs): Module =
 
 @OptIn(DelicateCoroutinesApi::class)
 fun applicationSetup() {
+    synchronized(applicationSetupLock) {
+        if (applicationSetupDone) {
+            logger.debug { "applicationSetup() already ran in this JVM, skipping duplicate initialization" }
+            return
+        }
+        applicationSetupDone = true
+    }
+
     Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
         KotlinLogging.logger {}.error(throwable) { "unhandled exception" }
     }
