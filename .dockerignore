@@ -1,0 +1,47 @@
+# Version control
+.git
+.gitignore
+.gitmodules
+.gitattributes
+
+# Build artifacts — every subproject
+**/build/
+**/.gradle/
+
+# Node.js
+**/node_modules/
+webUI/.yarn
+webUI/.pnp.cjs
+webUI/.pnp.loader.mjs
+# The WebUI dist is rebuilt in the Docker webui-build stage.
+webUI/build/
+
+# IDE and editor files
+.idea/
+*.iml
+.vscode/
+.editorconfig
+
+# Documentation (not needed at build time)
+docs/
+*.md
+!README.md
+
+# CI / CD
+.github/
+
+# Claude Code
+.claude/
+
+# Local Gradle overrides (gradle.properties contains local-machine paths)
+gradle.properties
+local.properties
+
+# Pre-downloaded WebUI zip — always rebuilt from the submodule source in Docker
+server/src/main/resources/WebUI.zip
+
+# Test output
+**/test-results/
+**/reports/
+e2e/test-results/
+e2e/playwright-report/
