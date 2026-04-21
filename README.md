@@ -7,8 +7,8 @@
 - [What is Suwayomi?](#what-is-suwayomi)
   - [Multi-User Mode](#multi-user-mode)
     - [First-Run Setup](#first-run-setup)
-    - [Admin Panel (current — server-rendered)](#admin-panel-current--server-rendered)
-    - [Integrated WebUI (planned — Phase 7)](#integrated-webui-planned--phase-7)
+    - [Admin Panel (server-rendered fallback)](#admin-panel-server-rendered-fallback)
+    - [Integrated WebUI (implemented — Phase 7)](#integrated-webui-implemented--phase-7)
   - [Features](#features)
 - [Suwayomi client projects](#suwayomi-client-projects)
   - [Actively Developed Clients](#actively-developed-clients)
@@ -56,9 +56,11 @@ You can use Mihon (Tachiyomi) to access your Suwayomi-Server. For more info look
 > This fork adds multi-user support. Each user has an isolated library, reading progress, categories, and tracker records. An `ADMIN` role manages other users; a `USER` role accesses only their own data. All auth is JWT-based with refresh-token rotation and session revocation.
 
 ### First-Run Setup
-On a fresh database, navigate to **`http://localhost:4567/setup.html`** to create the initial admin account before logging in.
+On a fresh database, the React WebUI now redirects unauthenticated users to **`/auth/setup`** to create the initial admin account before login.
 
-### Admin Panel (current — server-rendered)
+The server-rendered **`/setup.html`** page remains available as a fallback for non-SPA clients and direct recovery flows.
+
+### Admin Panel (server-rendered fallback)
 User management (create / edit / deactivate / reactivate / force sign-out / delete) is available at:
 
 **`http://localhost:4567/admin/users.html`**
@@ -66,18 +68,18 @@ User management (create / edit / deactivate / reactivate / force sign-out / dele
 Only accounts with the `ADMIN` role can access it; non-admins receive 403 and unauthenticated users are redirected to the login page.
 
 > [!NOTE]
-> This is the interim server-rendered admin panel. A native React user management panel (accessible directly from the WebUI's Settings menu) is planned as part of the integrated WebUI work described below.
+> This server-rendered admin panel remains as a fallback route. The primary admin flow is now the integrated React panel at `/settings/users`.
 
-### Integrated WebUI (planned — Phase 7)
-The project is working towards pulling the [Suwayomi-WebUI](https://github.com/Suwayomi/Suwayomi-WebUI) React app into this repository as a git submodule, extending it with multi-user features, and building it as part of the Gradle pipeline so it ships as the **default built-in WebUI** with no separate download required.
+### Integrated WebUI (implemented — Phase 7)
+This fork now builds a multi-user capable [Suwayomi-WebUI](https://github.com/Suwayomi/Suwayomi-WebUI) submodule as part of the Gradle pipeline and ships it as the **default built-in WebUI** (`BUNDLED` flavor).
 
-Planned additions to the React WebUI:
+Implemented additions in the React WebUI:
 - **Login screen** — JWT-based auth with silent token refresh and "remember session" support
 - **My Account panel** (all users) — change password, sign out of all devices
 - **User Management panel** (admin only) — full user CRUD accessible from the Settings menu, replacing the need to visit `/admin/users.html` directly
 - **First-run Setup screen** — create the initial admin account from within the SPA on first launch
 
-The existing server-rendered pages (`/setup.html`, `/admin/users.html`, `/login.html`) will remain in place as a fallback for non-browser clients and `SIMPLE_LOGIN` mode.
+The existing server-rendered pages (`/setup.html`, `/admin/users.html`, `/login.html`) remain in place as fallbacks. `/login.html` is intentionally retained for `SIMPLE_LOGIN` mode because server-side redirects can bypass SPA route interception.
 
 Other WebUI flavors (`WEBUI`, `VUI`, `CUSTOM`) remain selectable in server settings and are unaffected by this change.
 
@@ -107,7 +109,7 @@ Other WebUI flavors (`WEBUI`, `VUI`, `CUSTOM`) remain selectable in server setti
 **You need a client/user interface app as a front-end for Suwayomi-Server, if you [Directly Download Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server/releases/latest) you'll get a bundled version of [Suwayomi-WebUI](https://github.com/Suwayomi/Suwayomi-WebUI) with it.**
 
 > [!NOTE]
-> **This fork** is working towards shipping a modified build of Suwayomi-WebUI — extended with login, user settings, and admin user management — as the default built-in WebUI. Until that work is complete (Phase 7), the standard Suwayomi-WebUI is bundled as usual and the server-rendered admin pages at `/admin/users.html` and `/setup.html` handle multi-user flows.
+> **This fork** ships a modified multi-user build of Suwayomi-WebUI as the default built-in WebUI (`BUNDLED`), while keeping `/admin/users.html`, `/setup.html`, and `/login.html` as fallback routes.
 
 Here's a list of known clients/user interfaces for Suwayomi-Server (checkout the respective GitHub repository for their features):
 ##### Actively Developed Clients

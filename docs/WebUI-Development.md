@@ -163,3 +163,25 @@ npm run gql:codegen
 ```
 
 Commit the generated files (they live in `webUI/src/lib/graphql/generated/`).
+
+---
+
+## Testing (Phase 7)
+
+### Unit tests (Vitest + Testing Library)
+
+```bash
+cd webUI
+npm test
+```
+
+### E2E tests (Playwright)
+
+The E2E specs are environment-gated so they only run when explicitly enabled:
+
+```bash
+cd webUI
+E2E_RUN=1 npm run test:e2e
+```
+
+Required environment variables are documented in the spec files under `webUI/e2e/`.

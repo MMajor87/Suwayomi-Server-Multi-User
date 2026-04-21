@@ -82,6 +82,7 @@ fun WebUIFlavor.isDefault(): Boolean = this == WebUIFlavor.default
 object WebInterfaceManager {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val fallbackDownloadFlavor = WebUIFlavor.WEBUI
 
     private const val LAST_WEBUI_UPDATE_CHECK_KEY = "lastWebUIUpdateCheck"
     private const val SERVED_WEBUI_FLAVOR_KEY = "servedWebUIFlavor"
@@ -141,8 +142,10 @@ object WebInterfaceManager {
         }
 
         return AboutWebUI(
+            flavor = serverConfig.webUIFlavor.value,
             channel = serverConfig.webUIChannel.value,
             tag = currentVersion,
+            buildCommit = BuildConfig.WEBUI_BUILD_COMMIT,
             updateTimestamp = preferences.getLong(VERSION_UPDATE_TIMESTAMP_KEY, System.currentTimeMillis()),
         )
     }
@@ -256,7 +259,10 @@ object WebInterfaceManager {
     private fun scheduleWebUIUpdateCheck() {
         HAScheduler.descheduleCron(currentUpdateTaskId)
 
-        val isAutoUpdateDisabled = !isAutoUpdateEnabled() || serverConfig.webUIFlavor.value == WebUIFlavor.CUSTOM
+        val isAutoUpdateDisabled =
+            !isAutoUpdateEnabled() ||
+                serverConfig.webUIFlavor.value == WebUIFlavor.CUSTOM ||
+                serverConfig.webUIFlavor.value == WebUIFlavor.BUNDLED
         if (isAutoUpdateDisabled) {
             return
         }
@@ -391,41 +397,46 @@ object WebInterfaceManager {
         val log =
             KotlinLogging.logger("${logger.name} doInitialSetup(flavor= ${flavor.uiName})")
 
-        val isLocalWebUIValid = !isInvalid && isLocalWebUIValid(flavor, applicationDirs.webUIRoot)
+        if (flavor == WebUIFlavor.BUNDLED) {
+            setupBundledWebUI()
+            return
+        }
 
         /**
          * Performs the download and returns if the download was successful.
          *
          * In case the download failed but the local webUI is valid the download is considered a success to prevent the fallback logic
          */
-        val doDownload: suspend (getVersion: suspend () -> String) -> Boolean = { getVersion ->
-            try {
-                downloadVersion(flavor, getVersion())
-                true
-            } catch (_: Exception) {
-                false
-            } ||
-                isLocalWebUIValid
-        }
+        val doDownload: suspend (downloadFlavor: WebUIFlavor, getVersion: suspend () -> String) -> Boolean =
+            { downloadFlavor, getVersion ->
+                val isLocalWebUIValid = !isInvalid && isLocalWebUIValid(downloadFlavor, applicationDirs.webUIRoot)
 
-        // download the latest compatible version for the current selected webUI
-        val fallbackToDefaultWebUI = !doDownload { getLatestCompatibleVersion(flavor) }
+                try {
+                    downloadVersion(downloadFlavor, getVersion())
+                    true
+                } catch (_: Exception) {
+                    false
+                } ||
+                    isLocalWebUIValid
+            }
+
+        val fallbackToDefaultWebUI = !doDownload(flavor) { getLatestCompatibleVersion(flavor) }
         if (!fallbackToDefaultWebUI) {
             return
         }
 
-        if (!flavor.isDefault()) {
-            log.warn { "fallback to default webUI \"${WebUIFlavor.default.uiName}\"" }
+        if (flavor != fallbackDownloadFlavor) {
+            log.warn { "fallback to default webUI \"${fallbackDownloadFlavor.uiName}\"" }
 
-            serverConfig.webUIFlavor.value = WebUIFlavor.default
+            serverConfig.webUIFlavor.value = fallbackDownloadFlavor
 
-            val fallbackToBundledVersion = !doDownload { getLatestCompatibleVersion(flavor) }
+            val fallbackToBundledVersion = !doDownload(fallbackDownloadFlavor) { getLatestCompatibleVersion(fallbackDownloadFlavor) }
             if (!fallbackToBundledVersion) {
                 return
             }
         }
 
-        log.warn { "fallback to bundled default webUI \"${WebUIFlavor.default.uiName}\"" }
+        log.warn { "fallback to bundled default webUI \"${WebUIFlavor.BUNDLED.uiName}\"" }
 
         try {
             setupBundledWebUI()
@@ -435,15 +446,8 @@ object WebInterfaceManager {
     }
 
     private suspend fun setupBundledWebUI() {
-        try {
-            extractBundledWebUI()
-            updateServedWebUIInfo(WebUIFlavor.default)
-            return
-        } catch (e: BundledWebUIMissing) {
-            logger.warn(e) { "setupBundledWebUI: fallback to downloading the version of the bundled webUI" }
-        }
-
-        downloadVersion(WebUIFlavor.default, BuildConfig.WEBUI_TAG)
+        extractBundledWebUI()
+        updateServedWebUIInfo(WebUIFlavor.BUNDLED)
     }
 
     private fun extractBundledWebUI() {
@@ -452,7 +456,7 @@ object WebInterfaceManager {
 
         logger.info { "extractBundledWebUI: Using the bundled WebUI zip..." }
 
-        val webUIZip = WebUIFlavor.default.baseFileName
+        val webUIZip = WebUIFlavor.BUNDLED.baseFileName
         val webUIZipPath = "$tmpDir/$webUIZip"
         val webUIZipFile = File(webUIZipPath)
         resourceWebUI.use { input ->
@@ -467,8 +471,26 @@ object WebInterfaceManager {
 
     private suspend fun checkForUpdate(flavor: WebUIFlavor) {
         preferences.edit().putLong(LAST_WEBUI_UPDATE_CHECK_KEY, System.currentTimeMillis()).apply()
-        val localVersion = getLocalVersion()
 
+        if (flavor == WebUIFlavor.BUNDLED) {
+            val localVersion = getLocalVersion()
+            val isServedWebUIForCurrentFlavor = flavor.uiName == getServedWebUIFlavor().uiName
+            val shouldUpdateBundledVersion = !isServedWebUIForCurrentFlavor || localVersion != BuildConfig.WEBUI_TAG
+
+            if (!shouldUpdateBundledVersion) {
+                return
+            }
+
+            try {
+                setupBundledWebUI()
+                serveWebUI()
+            } catch (e: Exception) {
+                logger.warn(e) { "checkForUpdate(BUNDLED): failed due to" }
+            }
+            return
+        }
+
+        val localVersion = getLocalVersion()
         val log =
             KotlinLogging.logger("${logger.name} checkForUpdate(flavor= ${flavor.uiName}, localVersion= $localVersion)")
 
@@ -515,6 +537,10 @@ object WebInterfaceManager {
     ): Boolean {
         if (!doesLocalWebUIExist(path)) {
             return false
+        }
+
+        if (flavor == WebUIFlavor.BUNDLED) {
+            return getLocalVersion(path) == BuildConfig.WEBUI_TAG
         }
 
         val log =
@@ -630,8 +656,11 @@ object WebInterfaceManager {
         }
 
     private suspend fun getLatestCompatibleVersion(flavor: WebUIFlavor): String {
-        if (serverConfig.webUIChannel.value == WebUIChannel.BUNDLED) {
-            logger.debug { "getLatestCompatibleVersion: Channel is \"${WebUIChannel.BUNDLED}\", do not check for update" }
+        if (flavor == WebUIFlavor.BUNDLED || serverConfig.webUIChannel.value == WebUIChannel.BUNDLED) {
+            logger.debug {
+                "getLatestCompatibleVersion: Flavor/Channel is bundled " +
+                    "(flavor=${flavor.uiName}, channel=${serverConfig.webUIChannel.value}), do not check for update"
+            }
             return BuildConfig.WEBUI_TAG
         }
 
@@ -726,6 +755,12 @@ object WebInterfaceManager {
         emitStatus(version, DOWNLOADING, 0, immediate = true)
 
         try {
+            if (flavor == WebUIFlavor.BUNDLED) {
+                setupBundledWebUI()
+                emitStatus(version, FINISHED, 100, immediate = true)
+                return
+            }
+
             val webUIZip = "${flavor.baseFileName}-$version.zip"
             val webUIZipPath = "$tmpDir/$webUIZip"
             val webUIZipURL = "${getDownloadUrlFor(flavor, version)}/$webUIZip"
@@ -835,6 +870,14 @@ object WebInterfaceManager {
         raiseError: Boolean = false,
     ): Pair<String, Boolean> =
         try {
+            if (flavor == WebUIFlavor.BUNDLED) {
+                val isServedWebUIForCurrentFlavor = flavor.uiName == getServedWebUIFlavor().uiName
+                val latestCompatibleVersion = BuildConfig.WEBUI_TAG
+                val isVersionUpdateAvailable = latestCompatibleVersion != currentVersion
+                val isUpdateAvailable = !isServedWebUIForCurrentFlavor || isVersionUpdateAvailable
+                return Pair(latestCompatibleVersion, isUpdateAvailable)
+            }
+
             val isServedWebUIForCurrentFlavor = flavor.uiName == getServedWebUIFlavor().uiName
             val latestCompatibleVersion = getLatestCompatibleVersion(flavor)
             val isVersionUpdateAvailable = latestCompatibleVersion != currentVersion
