@@ -10,6 +10,7 @@ package eu.kanade.tachiyomi.network
 import android.content.Context
 import eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.interceptor.IgnoreGzipInterceptor
+import eu.kanade.tachiyomi.network.interceptor.SourceHostOverrideInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -84,6 +85,7 @@ class NetworkHelper(
                         ),
                     ).addInterceptor(UncaughtExceptionInterceptor())
                     .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
+                    .addInterceptor(SourceHostOverrideInterceptor())
                     .addNetworkInterceptor(IgnoreGzipInterceptor())
                     .addNetworkInterceptor(BrotliInterceptor)
 

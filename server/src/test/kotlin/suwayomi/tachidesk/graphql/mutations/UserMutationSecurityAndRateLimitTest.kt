@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory
 import suwayomi.tachidesk.graphql.server.toGraphQLContext
 import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.model.table.UserRole
+import suwayomi.tachidesk.server.serverConfig
 import suwayomi.tachidesk.server.user.ForbiddenException
 import suwayomi.tachidesk.server.user.UserType
 import suwayomi.tachidesk.server.user.createUserAccount
@@ -86,6 +87,38 @@ class UserMutationSecurityAndRateLimitTest : ApplicationTest() {
                     it.contains("success=false") &&
                     it.contains("username=$username") &&
                     it.contains("reason=invalid_credentials")
+            },
+        )
+    }
+
+    @Test
+    fun `login mutation blocks default admin credentials from non-loopback source`() {
+        val mutation = UserMutation()
+        val username = serverConfig.authUsername.value.ifBlank { "admin" }
+        val password = serverConfig.authPassword.value.ifBlank { "admin" }
+        val env = mockEnv(UserType.Visitor, sourceIp = "10.10.10.13")
+
+        val logs =
+            captureSecurityAuditLogs {
+                val blocked =
+                    assertThrows(Exception::class.java) {
+                        mutation.login(
+                            env,
+                            UserMutation.LoginInput(
+                                username = username,
+                                password = password,
+                            ),
+                        )
+                    }
+                assertTrue(blocked.message?.contains("Incorrect username or password.") == true)
+            }
+
+        assertTrue(
+            logs.any {
+                it.contains("login_attempt") &&
+                    it.contains("success=false") &&
+                    it.contains("username=$username") &&
+                    it.contains("reason=default_admin_remote_blocked")
             },
         )
     }

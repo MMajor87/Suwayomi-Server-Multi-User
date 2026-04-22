@@ -158,7 +158,7 @@ buildConfig {
     buildConfigField("String", "WEBUI_TAG", quoteWrap(webUIRevisionTag))
     buildConfigField("String", "WEBUI_BUILD_COMMIT", quoteWrap(getWebUIBuildCommit()))
 
-    buildConfigField("String", "GITHUB", quoteWrap("https://github.com/Suwayomi/Suwayomi-Server"))
+    buildConfigField("String", "GITHUB", quoteWrap("https://github.com/MMajor87/Suwayomi-Server-Multi-User"))
     buildConfigField("String", "DISCORD", quoteWrap("https://discord.gg/DDZdqZWaHA"))
 }
 

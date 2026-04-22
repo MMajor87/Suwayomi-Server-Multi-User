@@ -8,6 +8,8 @@ import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.model.table.UserRole
 import suwayomi.tachidesk.server.security.ActionRateLimiter
+import suwayomi.tachidesk.server.security.isDefaultAdminCredentialPair
+import suwayomi.tachidesk.server.security.isLoopbackSourceIp
 import suwayomi.tachidesk.server.security.SecurityAudit
 import suwayomi.tachidesk.server.user.ForbiddenException
 import suwayomi.tachidesk.server.user.PasswordSecurity
@@ -75,6 +77,17 @@ class UserMutation {
         if (dataFetchingEnvironment.getAttribute(Attribute.TachideskUser) !is UserType.Visitor) {
             throw IllegalArgumentException("Cannot login while already logged-in")
         }
+
+        if (isDefaultAdminCredentialPair(input.username, input.password) && !isLoopbackSourceIp(sourceIp)) {
+            SecurityAudit.loginAttempt(
+                username = input.username,
+                sourceIp = sourceIp,
+                success = false,
+                reason = "default_admin_remote_blocked",
+            )
+            throw Exception("Incorrect username or password.")
+        }
+
         val authenticatedUser = authenticateUser(input.username, input.password)
         if (authenticatedUser != null) {
             SecurityAudit.loginAttempt(

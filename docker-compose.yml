@@ -12,6 +12,12 @@ services:
     #   -Dsuwayomi.tachidesk.config.server.<key>=<value>
     environment:
       JAVA_OPTS: ""
+      # Must be one or more extension-repo index URLs (JSON), comma-separated.
+      # Keiyoushi is the default community repo; Iridium includes Bato.to.
+      EXTENSION_REPOS: "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json,https://raw.githubusercontent.com/IridiumOpal/tachiyomi-extensions/repo/index.min.json"
+      # Optional source host rewrites (old.host=new.host), comma-separated.
+      # Useful when a source extension still targets an old domain.
+      SOURCE_HOST_OVERRIDES: "bato.to=xbato.co.uk,www.bato.to=xbato.co.uk"
     # ── PostgreSQL (optional) ──────────────────────────────────────────────
     # Uncomment the block below (and the db service + suwayomi-db volume) to
     # switch from the default embedded H2 database to PostgreSQL.

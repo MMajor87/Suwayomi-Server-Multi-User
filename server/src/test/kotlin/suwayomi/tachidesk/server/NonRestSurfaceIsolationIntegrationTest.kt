@@ -97,6 +97,39 @@ class NonRestSurfaceIsolationIntegrationTest : ApplicationTest() {
     }
 
     @Test
+    fun `graphql chapter updates query is user scoped`() {
+        val scenario = createTwoUserTwoMangaScenario()
+        val query =
+            """
+            query {
+              chapters(
+                filter: { inLibrary: { equalTo: true } }
+                order: [{ by: FETCHED_AT, byType: DESC }, { by: SOURCE_ORDER, byType: DESC }]
+                first: 50
+              ) {
+                nodes {
+                  id
+                  manga {
+                    id
+                    title
+                  }
+                }
+              }
+            }
+            """.trimIndent()
+
+        val responseA = postGraphql(query, scenario.userAToken)
+        assertEquals(200, responseA.statusCode())
+        assertTrue(responseA.body().contains(scenario.mangaATitle), responseA.body())
+        assertFalse(responseA.body().contains(scenario.mangaBTitle), responseA.body())
+
+        val responseB = postGraphql(query, scenario.userBToken)
+        assertEquals(200, responseB.statusCode())
+        assertTrue(responseB.body().contains(scenario.mangaBTitle), responseB.body())
+        assertFalse(responseB.body().contains(scenario.mangaATitle), responseB.body())
+    }
+
+    @Test
     fun `graphql login mutation is reachable without auth header in UI_LOGIN mode`() {
         val suffix = UUID.randomUUID().toString().replace("-", "").take(12)
         val username = "graphql_login_$suffix"
