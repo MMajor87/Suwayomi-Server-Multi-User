@@ -33,6 +33,7 @@ import suwayomi.tachidesk.manga.model.table.CategoryMetaTable
 import suwayomi.tachidesk.manga.model.table.CategoryTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.server.JavalinSetup.Attribute
+import suwayomi.tachidesk.server.model.table.UserMangaLibraryTable
 import suwayomi.tachidesk.server.user.requireUser
 
 class CategoryMutation {
@@ -573,16 +574,33 @@ class CategoryMutation {
                             .where { (CategoryTable.id eq categoryId) and (CategoryTable.userId eq userId) }
                             .firstOrNull()
 
-                    val mangas =
-                        transaction {
-                            MangaTable
-                                .innerJoin(CategoryMangaTable)
-                                .selectAll()
+                    val mangaRows =
+                        MangaTable
+                            .innerJoin(CategoryMangaTable)
+                            .selectAll()
+                            .where {
+                                (CategoryMangaTable.category eq categoryId) and
+                                    (CategoryMangaTable.userId eq userId)
+                            }.toList()
+                    val mangaIds = mangaRows.map { it[MangaTable.id].value }
+                    val libraryEntries =
+                        if (mangaIds.isEmpty()) {
+                            emptyMap()
+                        } else {
+                            UserMangaLibraryTable
+                                .select(UserMangaLibraryTable.mangaId, UserMangaLibraryTable.inLibraryAt)
                                 .where {
-                                    (CategoryMangaTable.category eq categoryId) and
-                                        (CategoryMangaTable.userId eq userId)
+                                    (UserMangaLibraryTable.userId eq userId) and
+                                        (UserMangaLibraryTable.mangaId inList mangaIds)
+                                }.associate {
+                                    it[UserMangaLibraryTable.mangaId].value to it[UserMangaLibraryTable.inLibraryAt]
                                 }
-                                .map { MangaType(it) }
+                        }
+                    val mangas =
+                        mangaRows.map { row ->
+                            val mangaId = row[MangaTable.id].value
+                            val inLibraryAt = libraryEntries[mangaId]
+                            MangaType(row, inLibrary = inLibraryAt != null, inLibraryAt = inLibraryAt ?: 0L)
                         }
 
                     CategoryTable.deleteWhere { (CategoryTable.id eq categoryId) and (CategoryTable.userId eq userId) }
@@ -664,7 +682,16 @@ class CategoryMutation {
 
             val manga =
                 transaction {
-                    MangaType(MangaTable.selectAll().where { MangaTable.id eq id }.first())
+                    val row = MangaTable.selectAll().where { MangaTable.id eq id }.first()
+                    val inLibraryAt =
+                        UserMangaLibraryTable
+                            .select(UserMangaLibraryTable.inLibraryAt)
+                            .where {
+                                (UserMangaLibraryTable.userId eq userId) and
+                                    (UserMangaLibraryTable.mangaId eq id)
+                            }.firstOrNull()
+                            ?.get(UserMangaLibraryTable.inLibraryAt)
+                    MangaType(row, inLibrary = inLibraryAt != null, inLibraryAt = inLibraryAt ?: 0L)
                 }
 
             UpdateMangaCategoriesPayload(
@@ -686,7 +713,26 @@ class CategoryMutation {
 
             val mangas =
                 transaction {
-                    MangaTable.selectAll().where { MangaTable.id inList ids }.map { MangaType(it) }
+                    val rows = MangaTable.selectAll().where { MangaTable.id inList ids }.toList()
+                    val libraryEntries =
+                        if (ids.isEmpty()) {
+                            emptyMap()
+                        } else {
+                            UserMangaLibraryTable
+                                .select(UserMangaLibraryTable.mangaId, UserMangaLibraryTable.inLibraryAt)
+                                .where {
+                                    (UserMangaLibraryTable.userId eq userId) and
+                                        (UserMangaLibraryTable.mangaId inList ids)
+                                }.associate {
+                                    it[UserMangaLibraryTable.mangaId].value to it[UserMangaLibraryTable.inLibraryAt]
+                                }
+                        }
+
+                    rows.map { row ->
+                        val mangaId = row[MangaTable.id].value
+                        val inLibraryAt = libraryEntries[mangaId]
+                        MangaType(row, inLibrary = inLibraryAt != null, inLibraryAt = inLibraryAt ?: 0L)
+                    }
                 }
 
             UpdateMangasCategoriesPayload(

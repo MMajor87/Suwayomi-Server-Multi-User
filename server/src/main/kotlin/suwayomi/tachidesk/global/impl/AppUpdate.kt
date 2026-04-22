@@ -3,9 +3,11 @@ package suwayomi.tachidesk.global.impl
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.NetworkHelper
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import suwayomi.tachidesk.manga.impl.util.network.await
+import suwayomi.tachidesk.server.generated.BuildConfig
 import uy.kohesive.injekt.injectLazy
 
 /*
@@ -23,46 +25,75 @@ data class UpdateDataClass(
 )
 
 object AppUpdate {
-    private const val LATEST_STABLE_CHANNEL_URL = "https://api.github.com/repos/Suwayomi/Suwayomi-Server/releases/latest"
-    private const val LATEST_PREVIEW_CHANNEL_URL = "https://api.github.com/repos/Suwayomi/Suwayomi-Server-preview/releases/latest"
+    private const val GITHUB_REPO_PREFIX = "https://github.com/"
+    private const val GITHUB_API_REPO_PREFIX = "https://api.github.com/repos/"
 
     private val json: Json by injectLazy()
     private val network: NetworkHelper by injectLazy()
 
     suspend fun checkUpdate(): List<UpdateDataClass> {
-        val stableJson =
-            json
-                .parseToJsonElement(
-                    network.client
-                        .newCall(
-                            GET(LATEST_STABLE_CHANNEL_URL),
-                        ).await()
-                        .body
-                        .string(),
-                ).jsonObject
+        val stableRelease =
+            fetchLatestReleaseMetadata(
+                toGithubApiLatestReleaseUrl(BuildConfig.GITHUB),
+            )
+        val previewRelease =
+            fetchLatestReleaseMetadata(
+                toGithubApiLatestReleaseUrl(toPreviewRepositoryUrl(BuildConfig.GITHUB)),
+            )
 
-        val previewJson =
-            json
-                .parseToJsonElement(
-                    network.client
-                        .newCall(
-                            GET(LATEST_PREVIEW_CHANNEL_URL),
-                        ).await()
-                        .body
-                        .string(),
-                ).jsonObject
+        val fallbackRelease = stableRelease ?: previewRelease
+        val resolvedStable = stableRelease ?: fallbackRelease
+        val resolvedPreview = previewRelease ?: fallbackRelease
 
-        return listOf(
-            UpdateDataClass(
-                "Stable",
-                stableJson["tag_name"]!!.jsonPrimitive.content,
-                stableJson["html_url"]!!.jsonPrimitive.content,
-            ),
-            UpdateDataClass(
-                "Preview",
-                previewJson["tag_name"]!!.jsonPrimitive.content,
-                previewJson["html_url"]!!.jsonPrimitive.content,
-            ),
-        )
+        return buildList {
+            resolvedStable?.let { add(UpdateDataClass("Stable", it.tag, it.url)) }
+            resolvedPreview?.let { add(UpdateDataClass("Preview", it.tag, it.url)) }
+        }
     }
+
+    private fun toGithubApiLatestReleaseUrl(repositoryUrl: String): String {
+        val normalizedRepository =
+            repositoryUrl
+                .trim()
+                .removeSuffix("/")
+                .removePrefix(GITHUB_REPO_PREFIX)
+                .removePrefix("http://github.com/")
+                .removePrefix(GITHUB_API_REPO_PREFIX)
+                .removePrefix("repos/")
+
+        return "$GITHUB_API_REPO_PREFIX$normalizedRepository/releases/latest"
+    }
+
+    private fun toPreviewRepositoryUrl(repositoryUrl: String): String {
+        val normalizedRepositoryUrl = repositoryUrl.trim().removeSuffix("/")
+        return if (normalizedRepositoryUrl.endsWith("-preview")) {
+            normalizedRepositoryUrl
+        } else {
+            "$normalizedRepositoryUrl-preview"
+        }
+    }
+
+    private suspend fun fetchLatestReleaseMetadata(apiUrl: String): ReleaseMetadata? =
+        runCatching {
+            json
+                .parseToJsonElement(
+                    network.client
+                        .newCall(GET(apiUrl))
+                        .await()
+                        .body
+                        .string(),
+                ).jsonObject
+        }.getOrNull()
+            ?.toReleaseMetadata()
+
+    private fun JsonObject.toReleaseMetadata(): ReleaseMetadata? {
+        val tag = this["tag_name"]?.jsonPrimitive?.content ?: return null
+        val url = this["html_url"]?.jsonPrimitive?.content ?: return null
+        return ReleaseMetadata(tag = tag, url = url)
+    }
+
+    private data class ReleaseMetadata(
+        val tag: String,
+        val url: String,
+    )
 }

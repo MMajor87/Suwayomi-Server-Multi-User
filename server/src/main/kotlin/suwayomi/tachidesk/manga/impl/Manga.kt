@@ -264,7 +264,7 @@ object Manga {
             title = mangaEntry[MangaTable.title],
             thumbnailUrl = proxyThumbnailUrl(mangaId),
             thumbnailUrlLastFetched = mangaEntry[MangaTable.thumbnailUrlLastFetched],
-            initialized = true,
+            initialized = mangaEntry[MangaTable.initialized],
             artist = mangaEntry[MangaTable.artist],
             author = mangaEntry[MangaTable.author],
             description = mangaEntry[MangaTable.description],

@@ -45,6 +45,8 @@ import suwayomi.tachidesk.server.user.getUserFromContext
 import suwayomi.tachidesk.server.user.getUserFromWsContext
 import suwayomi.tachidesk.server.user.requireAdminUser
 import suwayomi.tachidesk.server.security.SecurityAudit
+import suwayomi.tachidesk.server.security.isDefaultAdminCredentialPair
+import suwayomi.tachidesk.server.security.isLoopbackSourceIp
 import suwayomi.tachidesk.server.util.Browser
 import suwayomi.tachidesk.server.util.ServerSubpath
 import suwayomi.tachidesk.server.util.WebInterfaceManager
@@ -159,6 +161,27 @@ object JavalinSetup {
             val username = ctx.formParam("user")
             val password = ctx.formParam("pass")
             val sourceIp = ctx.ip()
+
+            if (isDefaultAdminCredentialPair(username, password) && !isLoopbackSourceIp(sourceIp)) {
+                SecurityAudit.loginAttempt(
+                    username = username ?: "<empty>",
+                    sourceIp = sourceIp,
+                    success = false,
+                    reason = "default_admin_remote_blocked",
+                )
+                val locale: Locale = LocalizationHelper.ctxToLocale(ctx)
+                ctx.header("content-type", "text/html")
+                ctx.req().session.invalidate()
+                ctx.render(
+                    "Login.jte",
+                    mapOf(
+                        "locale" to locale,
+                        "error" to "Invalid username or password",
+                    ),
+                )
+                return@post
+            }
+
             val authenticatedUser =
                 if (username != null && password != null) {
                     authenticateUser(username, password)
@@ -258,6 +281,15 @@ object JavalinSetup {
 
             fun getBasicAuthUser() =
                 ctx.basicAuthCredentials()?.let { (username, password) ->
+                    if (isDefaultAdminCredentialPair(username, password) && !isLoopbackSourceIp(ctx.ip())) {
+                        SecurityAudit.unauthorizedAccess(
+                            sourceIp = ctx.ip(),
+                            method = ctx.method().toString(),
+                            path = ctx.path(),
+                            reason = "default_admin_basic_auth_remote_blocked",
+                        )
+                        return@let null
+                    }
                     authenticateUser(username, password)
                 }
 

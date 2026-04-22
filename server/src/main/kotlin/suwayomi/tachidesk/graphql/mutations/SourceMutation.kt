@@ -6,6 +6,7 @@ import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.SwitchPreferenceCompat
 import graphql.execution.DataFetcherResult
+import graphql.schema.DataFetchingEnvironment
 import org.jetbrains.exposed.sql.LikePattern
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -18,6 +19,7 @@ import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import suwayomi.tachidesk.graphql.asDataFetcherResult
 import suwayomi.tachidesk.graphql.directives.RequireAuth
+import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.graphql.types.FilterChange
 import suwayomi.tachidesk.graphql.types.MangaType
 import suwayomi.tachidesk.graphql.types.MetaInput
@@ -32,7 +34,10 @@ import suwayomi.tachidesk.manga.impl.util.source.GetCatalogueSource
 import suwayomi.tachidesk.manga.model.table.MangaTable
 import suwayomi.tachidesk.manga.model.table.SourceMetaTable
 import suwayomi.tachidesk.manga.model.table.SourceTable
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
 import suwayomi.tachidesk.server.JavalinSetup.future
+import suwayomi.tachidesk.server.model.table.UserMangaLibraryTable
+import suwayomi.tachidesk.server.user.requireUser
 import java.util.concurrent.CompletableFuture
 
 class SourceMutation {
@@ -260,8 +265,12 @@ class SourceMutation {
     )
 
     @RequireAuth
-    fun fetchSourceManga(input: FetchSourceMangaInput): CompletableFuture<DataFetcherResult<FetchSourceMangaPayload?>> {
+    fun fetchSourceManga(
+        dataFetchingEnvironment: DataFetchingEnvironment,
+        input: FetchSourceMangaInput,
+    ): CompletableFuture<DataFetcherResult<FetchSourceMangaPayload?>> {
         val (clientMutationId, sourceId, type, page, query, filters) = input
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
 
         return future {
             asDataFetcherResult {
@@ -290,10 +299,30 @@ class SourceMutation {
 
                 val mangas =
                     transaction {
-                        MangaTable
-                            .selectAll()
-                            .where { MangaTable.id inList mangaIds }
-                            .map { MangaType(it) }
+                        val rows =
+                            MangaTable
+                                .selectAll()
+                                .where { MangaTable.id inList mangaIds }
+                                .toList()
+                        val libraryEntries =
+                            if (mangaIds.isEmpty()) {
+                                emptyMap()
+                            } else {
+                                UserMangaLibraryTable
+                                    .select(UserMangaLibraryTable.mangaId, UserMangaLibraryTable.inLibraryAt)
+                                    .where {
+                                        (UserMangaLibraryTable.userId eq userId) and
+                                            (UserMangaLibraryTable.mangaId inList mangaIds)
+                                    }.associate {
+                                        it[UserMangaLibraryTable.mangaId].value to it[UserMangaLibraryTable.inLibraryAt]
+                                    }
+                            }
+
+                        rows.map { row ->
+                            val mangaId = row[MangaTable.id].value
+                            val inLibraryAt = libraryEntries[mangaId]
+                            MangaType(row, inLibrary = inLibraryAt != null, inLibraryAt = inLibraryAt ?: 0L)
+                        }
                     }.sortedBy {
                         mangaIds.indexOf(it.id)
                     }

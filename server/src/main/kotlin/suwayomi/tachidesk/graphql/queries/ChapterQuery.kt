@@ -14,6 +14,7 @@ import org.jetbrains.exposed.sql.Column
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.greater
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import org.jetbrains.exposed.sql.andWhere
 import org.jetbrains.exposed.sql.selectAll
@@ -31,6 +32,7 @@ import suwayomi.tachidesk.graphql.queries.filter.andFilterWithCompare
 import suwayomi.tachidesk.graphql.queries.filter.andFilterWithCompareEntity
 import suwayomi.tachidesk.graphql.queries.filter.andFilterWithCompareString
 import suwayomi.tachidesk.graphql.queries.filter.applyOps
+import suwayomi.tachidesk.graphql.server.getAttribute
 import suwayomi.tachidesk.graphql.server.primitives.Cursor
 import suwayomi.tachidesk.graphql.server.primitives.Order
 import suwayomi.tachidesk.graphql.server.primitives.OrderBy
@@ -42,8 +44,11 @@ import suwayomi.tachidesk.graphql.server.primitives.lessNotUnique
 import suwayomi.tachidesk.graphql.server.primitives.maybeSwap
 import suwayomi.tachidesk.graphql.types.ChapterNodeList
 import suwayomi.tachidesk.graphql.types.ChapterType
+import suwayomi.tachidesk.manga.impl.Library
 import suwayomi.tachidesk.manga.model.table.ChapterTable
 import suwayomi.tachidesk.manga.model.table.MangaTable
+import suwayomi.tachidesk.server.JavalinSetup.Attribute
+import suwayomi.tachidesk.server.user.requireUser
 import java.util.concurrent.CompletableFuture
 
 /**
@@ -56,7 +61,11 @@ class ChapterQuery {
     fun chapter(
         dataFetchingEnvironment: DataFetchingEnvironment,
         id: Int,
-    ): CompletableFuture<ChapterType> = dataFetchingEnvironment.getValueFromDataLoader("ChapterDataLoader", id)
+    ): CompletableFuture<ChapterType> {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
+        Library.requireChapterAccess(userId, id)
+        return dataFetchingEnvironment.getValueFromDataLoader("ChapterDataLoader", id)
+    }
 
     enum class ChapterOrderBy(
         override val column: Column<*>,
@@ -200,6 +209,7 @@ class ChapterQuery {
 
     @RequireAuth
     fun chapters(
+        dataFetchingEnvironment: DataFetchingEnvironment,
         condition: ChapterCondition? = null,
         filter: ChapterFilter? = null,
         @GraphQLDeprecated(
@@ -219,9 +229,36 @@ class ChapterQuery {
         last: Int? = null,
         offset: Int? = null,
     ): ChapterNodeList {
+        val userId = dataFetchingEnvironment.getAttribute(Attribute.TachideskUser).requireUser()
+        val isAdmin = Library.isAdmin(userId)
+        val explicitlyRequestedMangaIds =
+            mutableSetOf<Int>().apply {
+                condition?.mangaId?.let { add(it) }
+                filter?.mangaId?.equalTo?.let { add(it) }
+                filter?.mangaId?.`in`?.let { addAll(it) }
+            }
+        val userLibraryMangaIds =
+            if (isAdmin) {
+                emptySet()
+            } else {
+                Library.getUserLibraryMangaIds(userId)
+            }
+
         val queryResults =
             transaction {
+                if (!isAdmin && explicitlyRequestedMangaIds.isEmpty() && userLibraryMangaIds.isEmpty()) {
+                    return@transaction QueryResults(0, null, null, emptyList())
+                }
+
                 val res = ChapterTable.selectAll()
+
+                if (!isAdmin) {
+                    if (explicitlyRequestedMangaIds.isNotEmpty()) {
+                        res.andWhere { ChapterTable.manga inList explicitlyRequestedMangaIds.toList() }
+                    } else {
+                        res.andWhere { ChapterTable.manga inList userLibraryMangaIds.toList() }
+                    }
+                }
 
                 val libraryOp = filter?.getLibraryOp()
                 if (libraryOp != null) {
@@ -267,7 +304,7 @@ class ChapterQuery {
 
         val getAsCursor: (ChapterType) -> Cursor = (order?.firstOrNull()?.by ?: ChapterOrderBy.ID)::asCursor
 
-        val resultsAsType = queryResults.results.map { ChapterType(it) }
+        val resultsAsType = queryResults.results.map { ChapterType.fromRowForUser(it, userId) }
 
         return ChapterNodeList(
             resultsAsType,

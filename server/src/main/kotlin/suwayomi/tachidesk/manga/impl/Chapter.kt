@@ -7,6 +7,7 @@ package suwayomi.tachidesk.manga.impl
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -352,7 +353,17 @@ object Chapter {
                 // once such duplicated chapters have been added, they aren't being removed anymore as long as there is
                 // a chapter with the same url in the fetched chapter list, even if the duplicated chapter itself
                 // does not exist anymore on the source
-                val uniqueChapters = chapters.distinctBy { it.url }
+                var uniqueChapters = chapters.distinctBy { it.url }
+
+                if (uniqueChapters.isEmpty()) {
+                    val fallbackChapters = parseInlineChapterMapFallback(source, manga.url)
+                    if (fallbackChapters.isNotEmpty()) {
+                        logger.debug {
+                            "fetchChapterList($mangaId): recovered ${fallbackChapters.size} chapters via inline chapter-map fallback"
+                        }
+                        uniqueChapters = fallbackChapters
+                    }
+                }
 
                 if (uniqueChapters.isEmpty()) {
                     throw Exception("No chapters found")
@@ -527,6 +538,70 @@ object Chapter {
             }
 
         return chapterList
+    }
+
+    private fun parseInlineChapterMapFallback(
+        source: eu.kanade.tachiyomi.source.Source,
+        mangaUrl: String,
+    ): List<SChapter> {
+        val httpSource = source as? HttpSource ?: return emptyList()
+        val requestUrl = httpSource.baseUrl + mangaUrl
+        val response = runCatching { httpSource.client.newCall(GET(requestUrl, httpSource.headers)).execute() }.getOrNull() ?: return emptyList()
+
+        response.use { res ->
+            if (!res.isSuccessful) return emptyList()
+            val html = res.body?.string().orEmpty()
+            if (!html.contains("chapterSlugByChapterId")) return emptyList()
+
+            val comicSlug =
+                Regex("""window\.comicSlug\s*=\s*"([^"]+)"""")
+                    .find(html)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    .orEmpty()
+                    .trim()
+
+            val chapterMapRaw =
+                Regex(
+                    """window\.chapterSlugByChapterId\s*=\s*\{([^}]*)\}""",
+                    setOf(RegexOption.DOT_MATCHES_ALL),
+                ).find(html)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    .orEmpty()
+
+            if (comicSlug.isBlank() || chapterMapRaw.isBlank()) return emptyList()
+
+            val chapterEntries =
+                Regex(""""(\d+)"\s*:\s*"([^"]+)"""")
+                    .findAll(chapterMapRaw)
+                    .mapNotNull { match ->
+                        val id = match.groupValues.getOrNull(1)?.toIntOrNull() ?: return@mapNotNull null
+                        val slug = match.groupValues.getOrNull(2).orEmpty().trim()
+                        if (slug.isBlank()) return@mapNotNull null
+                        id to slug
+                    }.toList()
+
+            if (chapterEntries.isEmpty()) return emptyList()
+
+            return chapterEntries
+                .sortedByDescending { it.first }
+                .map { (_, slug) ->
+                    SChapter.create().apply {
+                        url = "/read/$comicSlug/$slug"
+                        val numberRaw =
+                            Regex("""chapter-([0-9]+(?:[-.][0-9]+)?)""", RegexOption.IGNORE_CASE)
+                                .find(slug)
+                                ?.groupValues
+                                ?.getOrNull(1)
+                                ?.replace('-', '.')
+                                .orEmpty()
+                        numberRaw.toFloatOrNull()?.let { chapter_number = it }
+                        name = numberRaw.takeIf { it.isNotBlank() }?.let { "Chapter $it" } ?: slug
+                        date_upload = 0L
+                    }
+                }
+        }
     }
 
     private fun downloadNewChapters(
