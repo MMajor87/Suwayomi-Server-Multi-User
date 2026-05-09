@@ -21,6 +21,7 @@ import io.javalin.http.RedirectResponse
 import io.javalin.http.UnauthorizedResponse
 import io.javalin.rendering.template.JavalinJte
 import io.javalin.websocket.WsContext
+import jakarta.servlet.http.Cookie
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -57,6 +58,7 @@ import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import kotlin.concurrent.thread
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 
 object JavalinSetup {
     private val logger = KotlinLogging.logger {}
@@ -146,13 +148,14 @@ object JavalinSetup {
         app.get(loginPath) { ctx ->
             val locale: Locale = LocalizationHelper.ctxToLocale(ctx)
             ctx.header("content-type", "text/html")
-            val httpCacheSeconds = 1.days.inWholeSeconds
-            ctx.header("cache-control", "max-age=$httpCacheSeconds")
+            ctx.header("cache-control", "no-store, no-cache, must-revalidate, max-age=0")
+            ctx.header("pragma", "no-cache")
             ctx.render(
                 "Login.jte",
                 mapOf(
                     "locale" to locale,
                     "error" to "",
+                    "remember" to false,
                 ),
             )
         }
@@ -160,6 +163,7 @@ object JavalinSetup {
         app.post(loginPath) { ctx ->
             val username = ctx.formParam("user")
             val password = ctx.formParam("pass")
+            val rememberLogin = ctx.formParam("remember") != null
             val sourceIp = ctx.ip()
 
             if (isDefaultAdminCredentialPair(username, password) && !isLoopbackSourceIp(sourceIp)) {
@@ -177,6 +181,7 @@ object JavalinSetup {
                     mapOf(
                         "locale" to locale,
                         "error" to "Invalid username or password",
+                        "remember" to rememberLogin,
                     ),
                 )
                 return@post
@@ -204,7 +209,25 @@ object JavalinSetup {
                 // Thus, all sessions are stored in memory and not persisted.
                 // Furthermore, default session timeout appears to be 30m
                 ctx.header("Location", redirect)
+                val session = ctx.req().session
                 ctx.sessionAttribute("logged-in", authenticatedUser.username)
+                session.maxInactiveInterval =
+                    if (rememberLogin) {
+                        30.days.inWholeSeconds.toInt()
+                    } else {
+                        30.minutes.inWholeSeconds.toInt()
+                    }
+                Cookie("JSESSIONID", session.id).apply {
+                    path = ServerSubpath.maybeAddAsPrefix("/")
+                    maxAge =
+                        if (rememberLogin) {
+                            30.days.inWholeSeconds.toInt()
+                        } else {
+                            -1
+                        }
+                    isHttpOnly = true
+                    secure = ctx.req().isSecure
+                }.also(ctx.res()::addCookie)
                 throw RedirectResponse(HttpStatus.SEE_OTHER)
             }
 
@@ -222,6 +245,7 @@ object JavalinSetup {
                 mapOf(
                     "locale" to locale,
                     "error" to "Invalid username or password",
+                    "remember" to rememberLogin,
                 ),
             )
         }

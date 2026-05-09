@@ -3,6 +3,7 @@
 
 @param locale: java.util.Locale
 @param error: String
+@param remember: Boolean
 
 <!DOCTYPE html>
 <html lang="en">
@@ -93,7 +94,8 @@
         form button:not([disabled]):hover {
             background-color: rgba(91, 116, 239, 0.08);
         }
-        form input {
+        form input[type="text"],
+        form input[type="password"] {
             all: unset;
             border-radius: 4px;
             border: 1px solid rgba(255, 255, 255, 0.23);
@@ -101,11 +103,24 @@
             width: auto;
             min-width: 0;
         }
-        form input:hover {
+        form input[type="text"]:hover,
+        form input[type="password"]:hover {
             border-color: white;
         }
-        form input:focus {
+        form input[type="text"]:focus,
+        form input[type="password"]:focus {
             border-color: rgb(91, 116, 239);
+        }
+        form .remember {
+            margin-top: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        form .remember input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            margin: 0;
         }
         form .controls {
             display: grid;
@@ -157,6 +172,10 @@
                     <input type="text" name="user" id="user" required placeholder="${MR.strings.login_placeholder_username.localized(locale)}"/>
                     <label for="pass">${MR.strings.login_label_password.localized(locale)}:</label>
                     <input type="password" name="pass" id="pass" required placeholder="${MR.strings.login_placeholder_password.localized(locale)}"/>
+            </div>
+            <div class="remember">
+                <input type="checkbox" name="remember" id="remember" value="true" checked="${remember}">
+                <label for="remember">Remember me</label>
             </div>
             <div class="submit">
                 <button type="submit">${MR.strings.login_label_login.localized(locale)}</button>
