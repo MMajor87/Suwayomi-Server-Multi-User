@@ -10,9 +10,9 @@ import java.io.BufferedReader
 const val MainClass = "suwayomi.tachidesk.MainKt"
 
 // should be bumped with each stable release
-val getTachideskVersion = { "v2.1.${getCommitCount()}" }
+val getTachideskVersion = { "v2.2.${getCommitCount()}" }
 
-val webUIRevisionTag = "r2643"
+val webUIRevisionTag = "r3136"
 
 // Short SHA of the webUI/ submodule HEAD — embedded in BuildConfig so the server
 // can display which WebUI commit is bundled. Falls back to "unknown" when the

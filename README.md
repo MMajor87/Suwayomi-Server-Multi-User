@@ -11,9 +11,8 @@
     - [Integrated WebUI (implemented — Phase 7)](#integrated-webui-implemented--phase-7)
   - [Features](#features)
 - [Suwayomi client projects](#suwayomi-client-projects)
-  - [Actively Developed Clients](#actively-developed-clients)
-  - [Inactive Clients (functional but outdated)](#inactive-clients-functional-but-outdated)
-  - [Abandoned Clients (functionality unknown)](#abandoned-clients-functionality-unknown)
+  - [Integrated clients](#integrated-clients)
+  - [Other clients](#other-clients-potentially-inactive-or-abandoned)
 - [Downloading and Running the app](#downloading-and-running-the-app)
   - [Using Operating System Specific Bundles](#using-operating-system-specific-bundles)
     - [Windows](#windows)
@@ -42,7 +41,7 @@
 # What is Suwayomi?
 <img src="https://github.com/Suwayomi/Suwayomi-Server/raw/master/server/src/main/resources/icon/faviconlogo.png" alt="drawing" width="200"/>
 
-A free and open source manga reader server that runs extensions built for [Mihon (Tachiyomi)](https://mihon.app/). 
+A free and open source manga reader server that runs extensions built for [Mihon (Tachiyomi)](https://mihon.app/).
 
 Suwayomi is an independent Mihon (Tachiyomi) compatible software and is **not a Fork of** Mihon (Tachiyomi).
 
@@ -112,18 +111,21 @@ Other WebUI flavors (`WEBUI`, `VUI`, `CUSTOM`) remain selectable in server setti
 > **This fork** ships a modified multi-user build of Suwayomi-WebUI as the default built-in WebUI (`BUNDLED`), while keeping `/admin/users.html`, `/setup.html`, and `/login.html` as fallback routes.
 
 Here's a list of known clients/user interfaces for Suwayomi-Server (checkout the respective GitHub repository for their features):
-##### Actively Developed Clients
-- [Suwayomi-WebUI](https://github.com/Suwayomi/Suwayomi-WebUI): The web front-end that Suwayomi-Server ships with by default. *(This fork will ship a multi-user-extended build of this UI as its default — see [Multi-User Mode](#multi-user-mode) above.)*
-- [Suwayomi-VUI](https://github.com/Suwayomi/Suwayomi-VUI): A Suwayomi-Server preview focused web frontend built with svelte
-- [Tachidesk-VaadinUI](https://github.com/Suwayomi/Tachidesk-VaadinUI): A Web front-end for Suwayomi-Server built with Vaadin.
-- [Moku](https://github.com/Youwes09/Moku): A fast, minimal Tauri + Svelte desktop client with clean and minimal UI.
-##### Inactive Clients (functional but outdated)
-- [Tachidesk-JUI](https://github.com/Suwayomi/Tachidesk-JUI): The native desktop front-end for Suwayomi-Server.
-- [Tachidesk-Sorayomi](https://github.com/Suwayomi/Tachidesk-Sorayomi): A Flutter front-end for Desktop(Linux, windows, etc.), Web and Android with a User Interface inspired by Mihon (Tachiyomi).
-#####  Abandoned Clients (functionality unknown)
-- [Tachidesk-qtui](https://github.com/Suwayomi/Tachidesk-qtui): A C++/Qt front-end for mobile devices(Android/linux), feature support is basic.
-- [Tachidesk-GTK](https://github.com/mahor1221/Tachidesk-GTK): A native Rust/GTK desktop client.
-- [Equinox](https://github.com/Suwayomi/Equinox): A web user interface made with Vue.js.
+##### Integrated clients
+
+These clients are built-in options, and the server can keep them automatically up-to-date.
+
+- [Suwayomi-WebUI](https://github.com/Suwayomi/Suwayomi-WebUI): Web app, PWA. *(This fork ships a multi-user-extended build of this UI as default - see [Multi-User Mode](#multi-user-mode) above.)*
+- [Suwayomi-VUI](https://github.com/Suwayomi/Suwayomi-VUI): Web app, PWA
+
+##### Other clients (potentially inactive or abandoned)
+- [Tachidesk-VaadinUI](https://github.com/Suwayomi/Tachidesk-VaadinUI): Desktop app (windows, linux, mac); UI in the browser, manages its own suwayomi server instance
+- [Moku](https://github.com/Youwes09/Moku): Desktop app (windows, linux, mac), requires access to a running server
+- [Tachidesk-JUI](https://github.com/Suwayomi/Tachidesk-JUI): Desktop app (windows, linux, mac); can manage its own suwayomi server instance
+- [Tachidesk-Sorayomi](https://github.com/Suwayomi/Tachidesk-Sorayomi): Web app; Desktop app (windows, linux, mac); Android app; requires access to a running server
+- [Tachidesk-qtui](https://github.com/Suwayomi/Tachidesk-qtui): Android app; iOS app; Desktop app (linux); requires access to a running server
+- [Tachidesk-GTK](https://github.com/mahor1221/Tachidesk-GTK): Native Rust/GTK desktop client
+- [Equinox](https://github.com/Suwayomi/Equinox): Web UI built with Vue.js
 
 # Downloading and Running the app
 ## Using Operating System Specific Bundles
